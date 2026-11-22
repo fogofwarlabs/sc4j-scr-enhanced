@@ -1,0 +1,16 @@
+{
+    "compilerOptions": {
+        "target": "ES5",
+        "module": "commonjs",
+        "moduleDetection": "force",
+        "noLib": true,
+        "strict": true,
+        "rootDir": "src",
+        "outDir": "script"
+    },
+    "files": [
+        "../../../../../../../../../mod/resources/org/fogofwarlabs/sc4j/screnhanced/script/scr-enhanced.d.ts",
+        "../../../../../../../../../mod/resources/org/fogofwarlabs/sc4j/screnhanced/script/core.d.ts"
+    ],
+    "include": ["src/**/*.ts"]
+}

@@ -13,8 +13,7 @@ import java.util.stream.Stream;
 /**
  * Makes the clone of the SC:R mod that a patch mod builds: it copies the main sources and resources ({@code src/main}) of every module of the
  * SC:R mod into a new folder, keeping the module folders ({@code scr-client/src/main/...}), and copies the patch mod's overlay over them
- * ({@link CloneOverlay}) after checking that no SC:R mod file changed under an overlay file. The build runs it before it compiles the clone, so
- * the repository holds no second copy of the SC:R mod's sources, only the overlay.
+ * ({@link CloneOverlay}) after checking that no SC:R mod file changed under an overlay file. The build runs it before it compiles the clone.
  * <p>
  * Arguments: the mode, the SC:R mod folder ({@code scr}), the overlay folder, the lock file, the base folder and the path prefix of the
  * build's tasks for messages (such as {@code :}); for the mode {@value #CLONE_MODE} also the output folder (absent or empty) and

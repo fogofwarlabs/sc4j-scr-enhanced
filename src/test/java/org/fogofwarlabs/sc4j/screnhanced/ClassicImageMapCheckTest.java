@@ -73,8 +73,7 @@ final class ClassicImageMapCheckTest {
      *
      * @param gameData the installed game data
      * @param mapPath  the raw map
-     * @param asked    {@code true} to ask the plugins for every image's graphics every frame, {@code false} to replace them by plugins that give
-     *                 nothing
+     * @param asked    {@code true} to ask the plugins for every image's graphics every frame, {@code false} to replace them by plugins that give nothing
      * @return the run
      * @throws IOException if the map cannot be read
      */

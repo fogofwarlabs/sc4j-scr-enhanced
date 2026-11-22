@@ -17,6 +17,7 @@
   ],
   "website": "https://github.com/fogofwarlabs/sc4j",
   "images": {"icon": "meta/icon.png", "banner": "meta/banner.png"},
+  "tools": [{"id": "script", "main": "org.fogofwarlabs.sc4j.screnhanced.script.ScriptTool"}],
   "settings": [
     {
       "key": "gameFolder",

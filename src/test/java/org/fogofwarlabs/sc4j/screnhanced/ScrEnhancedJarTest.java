@@ -27,10 +27,11 @@ import java.util.stream.Stream;
 
 /**
  * Tests the built jar of SC:R Enhanced against the built SC:R mod jar: it holds every entry of the SC:R mod jar plus only its own classes
- * (package {@code org.fogofwarlabs.sc4j.screnhanced}), its own resources ({@code src/mod/resources}) and the files the overlay adds, and of the
- * shared entries exactly the files the overlay replaces differ (a replaced source as its class and nested classes) besides the notice of each
- * build ({@code META-INF/NOTICE}); its manifest has its own mod id with the SC:R mod's entry, engine version and settings; and its mod identity
- * differs from the SC:R mod's first in the mod id.
+ * (package {@code org.fogofwarlabs.sc4j.screnhanced}), its own resources ({@code src/mod/resources}), the files the overlay adds and the
+ * bundled Rhino (its classes without {@code module-info.class}, and its licence text), and of the shared entries exactly the files the
+ * overlay replaces differ (a replaced source as its class and nested classes) besides the notice of each build ({@code META-INF/NOTICE});
+ * its manifest has its own mod id with the SC:R mod's entry, engine version and settings; and its mod identity differs from the SC:R mod's
+ * first in the mod id.
  */
 final class ScrEnhancedJarTest {
     private static final @NotNull String MOD_ID = "scr-enhanced";
@@ -41,6 +42,10 @@ final class ScrEnhancedJarTest {
     private static final @NotNull String NESTED_CLASS_SEPARATOR = "$";
     private static final @NotNull String ENHANCED_PACKAGE_FOLDER = "org/fogofwarlabs/sc4j/screnhanced/";
     private static final @NotNull String NOTICE_ENTRY = "META-INF/NOTICE";
+    private static final @NotNull String BUNDLED_LIBRARY_FOLDER = "org/mozilla/";
+    private static final @NotNull String BUNDLED_LICENCE_ENTRY = "META-INF/MPL-2.0.txt";
+    private static final @NotNull String BUNDLED_CONTEXT_ENTRY = "org/mozilla/javascript/Context.class";
+    private static final @NotNull String MODULE_INFO_ENTRY = "module-info.class";
 
     /**
      * Creates the identity the runtime computes for a jar of the SC:R mod or its patch with the supported installation, whose build is the
@@ -133,7 +138,7 @@ final class ScrEnhancedJarTest {
 
         for (String name : enhanced.keySet()) {
             Assertions.assertTrue(scr.containsKey(name) || name.startsWith(ENHANCED_PACKAGE_FOLDER) || resources.contains(name) ||
-                                  isOverlaid(overlaid, name),
+                                  isOverlaid(overlaid, name) || name.startsWith(BUNDLED_LIBRARY_FOLDER) || name.equals(BUNDLED_LICENCE_ENTRY),
                                   () -> "an entry beyond the SC:R mod: " + name);
         }
 
@@ -151,6 +156,15 @@ final class ScrEnhancedJarTest {
             Assertions.assertTrue(changed.contains(name) || !scr.containsKey(name) && enhanced.containsKey(name),
                                   () -> "an entry of the overlay is unchanged or missing: " + name);
         }
+    }
+
+    @Test
+    void the_enhanced_jar_carries_rhino_and_its_licence() throws IOException {
+        Map<String, byte[]> enhanced = readEntries(ScrEnhancedTestResources.getModJar());
+
+        Assertions.assertTrue(enhanced.containsKey(BUNDLED_CONTEXT_ENTRY), BUNDLED_CONTEXT_ENTRY);
+        Assertions.assertTrue(enhanced.containsKey(BUNDLED_LICENCE_ENTRY), BUNDLED_LICENCE_ENTRY);
+        Assertions.assertFalse(enhanced.containsKey(MODULE_INFO_ENTRY), MODULE_INFO_ENTRY);
     }
 
     @Test

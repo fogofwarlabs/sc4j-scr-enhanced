@@ -30,6 +30,11 @@ import java.util.function.Supplier;
  * HD graphics. A pointer the GRP table held when the game's memory was created names the installed graphics of that entry's image, so a copied
  * table entry draws another image's graphics in every graphics.
  * <p>
+ * A script's replacement of an image's graphics ({@link ImageReplacements}, found through {@link ImageReplacementSource}) wins over every EUD
+ * GRP and anim pointer of the image: the image draws the replacement's GRP and anims, the installed graphics where the replacement has none, and
+ * never the graphics its pointer names or another image's installed graphics. Written frames and render functions still apply to it, and a
+ * frame or draw function a script set for the image wins over them.
+ * <p>
  * The plugin observes the writes through the game's memory view and never changes the game: the simulation keeps the installed GRP's dimensions.
  * A GRP in memory is read at its pointer when it is first drawn and its frames are decoded when they are drawn ({@link EmbeddedGrp}); an anim is
  * read when it is first drawn and parsed off the drawing thread ({@link EmbeddedAnim}), the parsed anims of a game kept within
@@ -88,7 +93,7 @@ public final class ClassicImageGraphics implements ScrGamePlugin {
     /**
      * The bytes of parsed anims a game keeps.
      */
-    private static final long ANIMATION_BUDGET = 256L << MEBIBYTE_SHIFT;
+    static final long ANIMATION_BUDGET = 256L << MEBIBYTE_SHIFT;
     /**
      * The shift of the drawn frame index in the frame DWORD.
      */
@@ -104,8 +109,9 @@ public final class ClassicImageGraphics implements ScrGamePlugin {
     private static final int HISTORY_GROWTH = 2;
 
     private final @NotNull Supplier<@Nullable SpriteImagePool> images;
+    private final @NotNull Supplier<@Nullable ImageReplacements> replacements;
 
-    private @Nullable ClassicMemoryView memory;
+    private @Nullable EmbeddedMemory memory;
 
     /**
      * Per image type, the generations ({@link SpriteImagePool#getGeneration()}) at the table writes, in write order; a write of the pointer
@@ -169,10 +175,12 @@ public final class ClassicImageGraphics implements ScrGamePlugin {
     /**
      * Creates a {@link ClassicImageGraphics} instance over a game's images.
      *
-     * @param images the game's image pool, {@code null} before the game has one
+     * @param images       the game's image pool, {@code null} before the game has one
+     * @param replacements the image graphics a script of the game replaces, {@code null} for a game without
      */
-    public ClassicImageGraphics(@NotNull Supplier<@Nullable SpriteImagePool> images) {
-        this.images = images;
+    public ClassicImageGraphics(@NotNull Supplier<@Nullable SpriteImagePool> images, @NotNull Supplier<@Nullable ImageReplacements> replacements) {
+        this.images       = images;
+        this.replacements = replacements;
 
         this.memory = null;
 
@@ -205,7 +213,7 @@ public final class ClassicImageGraphics implements ScrGamePlugin {
      */
     @Override
     public void onAddressSpaceCreated(@NotNull ClassicMemoryView memory) {
-        this.memory = memory;
+        this.memory = EmbeddedMemory.of(memory);
 
         this.installedPointers.clear();
         this.graphics.clear();
@@ -227,26 +235,40 @@ public final class ClassicImageGraphics implements ScrGamePlugin {
     }
 
     /**
-     * Finds the graphics a sprite image draws instead of its installed GRP: the sheet of the GRP its pointer names.
+     * Finds the graphics a sprite image draws instead of its installed GRP: the GRP of its script replacement, else the sheet of the GRP its
+     * pointer names.
      *
      * @param image an image of a drawn sprite
      * @return the frames of the GRP the image draws, or {@code null} for its installed graphics
      */
     @Override
     public @Nullable ScrImageSheet findImageSheet(@NotNull SpriteImage image) {
+        ImageGraphics replaced = this.findReplacement(image);
+
+        if (replaced != null) {
+            return replaced.getGrp();
+        }
+
         EmbeddedGraphics found = this.findGraphics(this.findPointer(image));
 
         return found == null ? null : found.findGrp();
     }
 
     /**
-     * Finds the HD graphics a sprite image draws instead of its installed anim: the anims its pointer names or links.
+     * Finds the HD graphics a sprite image draws instead of its installed anim: the anims of its script replacement, else the anims its pointer
+     * names or links.
      *
      * @param image an image of a drawn sprite
      * @return the anims the image draws, or {@code null} for its installed anim
      */
     @Override
     public @Nullable ScrImageAnimation findImageAnimation(@NotNull SpriteImage image) {
+        ImageGraphics replaced = this.findReplacement(image);
+
+        if (replaced != null) {
+            return replaced.hasAnimation() ? replaced : null;
+        }
+
         EmbeddedGraphics found = this.findGraphics(this.findPointer(image));
 
         return found != null && found.hasAnimation() ? found : null;
@@ -254,13 +276,17 @@ public final class ClassicImageGraphics implements ScrGamePlugin {
 
     /**
      * Finds the image type whose installed graphics a sprite image draws instead of its own: the image whose GRP table entry held the image's
-     * pointer when the game's memory was created.
+     * pointer when the game's memory was created; an image with a script replacement keeps its own.
      *
      * @param image an image of a drawn sprite
      * @return the image type, or {@code -1} for the image's own
      */
     @Override
     public int findImageTypeId(@NotNull SpriteImage image) {
+        if (this.findReplacement(image) != null) {
+            return -1;
+        }
+
         Integer type = this.installedPointers.get(this.findPointer(image));
 
         return type == null ? -1 : type;
@@ -268,13 +294,22 @@ public final class ClassicImageGraphics implements ScrGamePlugin {
 
     /**
      * Finds the frame a sprite image draws instead of its own: the frame index written to its image array entry while it held the entry, until its
-     * own frame changes, in the graphics the image draws; an image whose graphics in memory cannot be read draws its own frame.
+     * own frame changes, in the graphics the image draws; an image whose graphics in memory cannot be read draws its own frame, and an image with a
+     * script replacement draws the written frame in the replacement. A frame a script set for the image ({@link ImageReplacements#findImageFrame})
+     * wins over the written one.
      *
      * @param image an image of a drawn sprite
      * @return the frame index, or {@code -1} for the image's own frame
      */
     @Override
     public int findImageFrame(@NotNull SpriteImage image) {
+        ImageReplacements current = this.replacements.get();
+        int scriptFrame = current == null ? -1 : current.findImageFrame(image);
+
+        if (scriptFrame >= 0) {
+            return scriptFrame;
+        }
+
         int slot = image.getIndex();
 
         if (slot < 0 || slot >= IMAGE_ENTRIES || this.frameGenerations[slot] < image.getPool().getGeneration(slot) ||
@@ -284,7 +319,7 @@ public final class ClassicImageGraphics implements ScrGamePlugin {
 
         int pointer = this.findPointer(image);
 
-        if (pointer != 0 && !this.installedPointers.containsKey(pointer)) {
+        if (pointer != 0 && !this.installedPointers.containsKey(pointer) && this.findReplacement(image) == null) {
             EmbeddedGraphics found = this.findGraphics(pointer);
 
             if (found == null || !found.isReadable()) {
@@ -297,13 +332,21 @@ public final class ClassicImageGraphics implements ScrGamePlugin {
 
     /**
      * Finds the draw function a sprite image draws with instead of its own: the draw function of the render function written to its image array
-     * entry while it held the entry, until its own draw function changes.
+     * entry while it held the entry, until its own draw function changes. A draw function a script set for the image
+     * ({@link ImageReplacements#findImageDrawFunction}) wins over the written one.
      *
      * @param image an image of a drawn sprite
      * @return the draw function, or {@code -1} for the image's own
      */
     @Override
     public int findImageDrawFunction(@NotNull SpriteImage image) {
+        ImageReplacements current = this.replacements.get();
+        int scriptDrawFunction = current == null ? -1 : current.findImageDrawFunction(image);
+
+        if (scriptDrawFunction >= 0) {
+            return scriptDrawFunction;
+        }
+
         int slot = image.getIndex();
 
         if (slot < 0 || slot >= IMAGE_ENTRIES || this.drawGenerations[slot] < image.getPool().getGeneration(slot) ||
@@ -315,13 +358,25 @@ public final class ClassicImageGraphics implements ScrGamePlugin {
     }
 
     /**
+     * Finds the script replacement of an image's graphics.
+     *
+     * @param image an image
+     * @return the replacement, or {@code null} if the game has no script replacements or none for the image
+     */
+    private @Nullable ImageGraphics findReplacement(@NotNull SpriteImage image) {
+        ImageReplacements current = this.replacements.get();
+
+        return current == null ? null : current.findGraphics(image);
+    }
+
+    /**
      * Finds the graphics in memory a pointer names.
      *
      * @param pointer the pointer
      * @return the graphics, or {@code null} for pointer {@code 0}, an installed graphics pointer or before the address space exists
      */
     private @Nullable EmbeddedGraphics findGraphics(int pointer) {
-        ClassicMemoryView view = this.memory;
+        EmbeddedMemory view = this.memory;
 
         if (view == null || pointer == 0 || this.installedPointers.containsKey(pointer)) {
             return null;

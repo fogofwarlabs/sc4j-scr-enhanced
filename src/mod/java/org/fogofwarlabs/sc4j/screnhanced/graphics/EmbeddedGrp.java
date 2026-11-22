@@ -6,7 +6,6 @@ import org.fogofwarlabs.sc4j.engine.resource.graphics.SpriteSheet;
 import org.fogofwarlabs.sc4j.scr.data.format.image.GrpFile;
 import org.fogofwarlabs.sc4j.scr.data.resource.ScrImageSheet;
 import org.fogofwarlabs.sc4j.scr.data.resource.importer.GrpSheetUtils;
-import org.fogofwarlabs.sc4j.scr.game.trigger.eud.ClassicMemoryView;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -62,7 +61,7 @@ final class EmbeddedGrp implements ScrImageSheet {
     }
 
 
-    private final @NotNull ClassicMemoryView memory;
+    private final @NotNull EmbeddedMemory memory;
     private final int pointer;
 
     /**
@@ -85,10 +84,10 @@ final class EmbeddedGrp implements ScrImageSheet {
     /**
      * Creates an {@link EmbeddedGrp} instance for a pointer, read on first use.
      *
-     * @param memory  the memory view the bytes are read and observed through
+     * @param memory  the memory the bytes are read and observed through
      * @param pointer the address of the GRP header
      */
-    EmbeddedGrp(@NotNull ClassicMemoryView memory, int pointer) {
+    EmbeddedGrp(@NotNull EmbeddedMemory memory, int pointer) {
         this.memory  = memory;
         this.pointer = pointer;
 

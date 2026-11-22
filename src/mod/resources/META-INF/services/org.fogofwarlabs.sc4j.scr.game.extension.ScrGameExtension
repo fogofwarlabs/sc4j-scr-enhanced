@@ -3,3 +3,4 @@ org.fogofwarlabs.sc4j.screnhanced.memory.ClassicMemoryExtension
 org.fogofwarlabs.sc4j.screnhanced.graphics.ClassicScreenExtension
 org.fogofwarlabs.sc4j.screnhanced.graphics.ClassicConsoleExtension
 org.fogofwarlabs.sc4j.screnhanced.graphics.ClassicTerrainExtension
+org.fogofwarlabs.sc4j.screnhanced.script.ScriptInputExtension

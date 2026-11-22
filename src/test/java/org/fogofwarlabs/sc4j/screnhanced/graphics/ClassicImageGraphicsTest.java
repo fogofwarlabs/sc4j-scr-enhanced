@@ -20,7 +20,6 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.charset.StandardCharsets;
 
 /**
  * Checks the classic image graphics rule with a GRP that EUD writes place in memory: a new image takes the GRP table entry written before it, an
@@ -57,6 +56,10 @@ final class ClassicImageGraphicsTest {
      */
     private static final int WRITTEN_FRAME = 5;
     private static final int UNKNOWN_RENDER_FUNCTION = 0x401000;
+    /**
+     * The frame a script sets, other than {@link #WRITTEN_FRAME}.
+     */
+    private static final int SCRIPT_FRAME = 3;
 
     /**
      * The memory the anim tests write to, the place of their GRP in it and of their anims after it.
@@ -67,24 +70,11 @@ final class ClassicImageGraphicsTest {
     private static final int HD_ANIM_OFFSET = 0x100;
     private static final int HD2_ANIM_OFFSET = 0x400;
     /**
-     * The anim layout: the header, the entry with one layer record, one frame record and a 4x4 DXT1 texture.
-     */
-    private static final int ANIM_HEADER_SIZE = 332;
-    private static final int ANIM_FRAME_TABLE = ANIM_HEADER_SIZE + 24;
-    private static final int ANIM_TEXTURE = ANIM_FRAME_TABLE + 16;
-    private static final int DDS_SIZE = 136;
-    private static final int ANIM_CANVAS = 16;
-    private static final int ANIM_FRAME_SIZE = 4;
-    /**
-     * The time the tests wait for an anim parse.
-     */
-    private static final long PARSE_TIMEOUT_NANOSECONDS = 10_000_000_000L;
-    /**
      * The image type whose installed table pointer the copy test copies.
      */
     private static final int COPIED_IMAGE_TYPE = 7;
     /**
-     * The offsets of the frame data addresses of frame {@code 0} and frame {@code 1} in {@link #createGrp()}.
+     * The offsets of the frame data addresses of frame {@code 0} and frame {@code 1} in the GRP of {@link ImageFileScenario#createGrp(int)}.
      */
     private static final int FIRST_FRAME_DATA_OFFSET = 10;
     private static final int SECOND_FRAME_DATA_OFFSET = 18;
@@ -94,34 +84,13 @@ final class ClassicImageGraphicsTest {
     private static final int LINK_HD_OFFSET = 4;
     private static final int LINK_HD2_OFFSET = 8;
     /**
-     * The name of the anim layer the tests create.
-     */
-    private static final @NotNull String DIFFUSE_LAYER_NAME = "diffuse";
-    /**
      * The time a test waits for a parse that gives no sheet.
      */
     private static final long FAILED_PARSE_WAIT_MILLISECONDS = 200;
-
     /**
-     * Creates a two-frame GRP on a 4x3 canvas whose frame data addresses are absolute: frame {@code 0} is a 2x2 rectangle (palette indices
-     * {@code 5, 6} over two of {@code 7}), frame {@code 1} a 3x1 rectangle at {@code (1, 1)} (one transparent pixel, then {@code 8, 9}).
+     * The time a test waits for a new parse of a written anim.
      */
-    private static byte @NotNull [] createGrp() {
-        ByteBuffer grp = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
-
-        grp.putShort((short) 2).putShort((short) 4).putShort((short) 3);
-        grp.put((byte) 0).put((byte) 0).put((byte) 2).put((byte) 2).putInt(GRP_ADDRESS + 22);
-        grp.put((byte) 1).put((byte) 1).put((byte) 3).put((byte) 1).putInt(GRP_ADDRESS + 31);
-        // Frame 0: two line offsets, a literal run of two and a repeat run of two.
-        grp.putShort((short) 4).putShort((short) 7);
-        grp.put((byte) 2).put((byte) 5).put((byte) 6);
-        grp.put((byte) 0x42).put((byte) 7);
-        // Frame 1: one line offset, a transparent run of one and a literal run of two.
-        grp.putShort((short) 2);
-        grp.put((byte) 0x81).put((byte) 2).put((byte) 8).put((byte) 9);
-
-        return grp.array();
-    }
+    private static final long PARSE_TIMEOUT_NANOSECONDS = 10_000_000_000L;
 
     /**
      * Creates a GRP of {@link #LARGE_FRAME_COUNT} one-pixel frames on a 1x1 canvas at {@link #LARGE_GRP_ADDRESS}: every frame draws palette index
@@ -149,53 +118,12 @@ final class ClassicImageGraphicsTest {
         return grp.array();
     }
 
-    /**
-     * Creates a single-entry anim of a scale: a {@code diffuse} layer of one 4x4 DXT1 block and one canvas-placed frame on a 16x16 canvas.
-     */
-    private static byte @NotNull [] createAnim(int scale) {
-        ByteBuffer anim = ByteBuffer.allocate(ANIM_TEXTURE + DDS_SIZE).order(ByteOrder.LITTLE_ENDIAN);
-
-        anim.putInt(EmbeddedAnim.MAGIC).put((byte) scale).put((byte) 2).putShort((short) 0).putShort((short) 1).putShort((short) 1);
-        anim.put(DIFFUSE_LAYER_NAME.getBytes(StandardCharsets.US_ASCII));
-        anim.position(ANIM_HEADER_SIZE);
-        anim.putShort((short) 1).putShort((short) 0).putShort((short) ANIM_CANVAS).putShort((short) ANIM_CANVAS).putInt(ANIM_FRAME_TABLE);
-        anim.putInt(ANIM_TEXTURE).putInt(DDS_SIZE).putShort((short) ANIM_FRAME_SIZE).putShort((short) ANIM_FRAME_SIZE);
-        anim.putShort((short) 0).putShort((short) 0).putShort((short) 6).putShort((short) 6);
-        anim.putShort((short) ANIM_FRAME_SIZE).putShort((short) ANIM_FRAME_SIZE).putInt(1);
-        anim.putInt(0x20534444).putInt(124).putInt(0).putInt(ANIM_FRAME_SIZE).putInt(ANIM_FRAME_SIZE);
-        anim.position(ANIM_TEXTURE + 28);
-        anim.putInt(1);
-        anim.position(ANIM_TEXTURE + 80);
-        anim.putInt(4).putInt(0x31545844);
-        anim.position(ANIM_TEXTURE + 128);
-        anim.putShort((short) 0xF800).putShort((short) 0x001F).putInt(0);
-
-        return anim.array();
-    }
-
     private static @NotNull ClassicAddressSpace createAnimSpace() {
         ClassicAddressSpace space = createSpace();
 
         space.add(new ClassicStorageRegion(ANIM_MEMORY, ANIM_MEMORY_SIZE));
 
         return space;
-    }
-
-    /**
-     * Asks an image's anims for the sheet of a scale until a parse gives one.
-     */
-    private static @NotNull TextureSheet awaitSheet(@NotNull ScrImageAnimation animation, int scale) {
-        long deadline = System.nanoTime() + PARSE_TIMEOUT_NANOSECONDS;
-        TextureSheet sheet = animation.findSheet(scale);
-
-        while (sheet == null && System.nanoTime() < deadline) {
-            Thread.onSpinWait();
-            sheet = animation.findSheet(scale);
-        }
-
-        Assertions.assertNotNull(sheet, "the anim is parsed");
-
-        return sheet;
     }
 
     private static void writeBytes(@NotNull ClassicAddressSpace space, int address, byte @NotNull [] bytes) {
@@ -246,10 +174,10 @@ final class ClassicImageGraphicsTest {
     void a_new_image_takes_the_table_entry_written_before_it() throws IOException {
         ClassicAddressSpace space = createSpace();
         SpriteImagePool pool = new SpriteImagePool(POOL_CAPACITY);
-        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool);
+        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool, () -> null);
 
         graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
-        writeBytes(space, GRP_ADDRESS, createGrp());
+        writeBytes(space, GRP_ADDRESS, ImageFileScenario.createGrp(GRP_ADDRESS));
 
         SpriteImage before = createImage(pool);
 
@@ -282,10 +210,10 @@ final class ClassicImageGraphicsTest {
     void an_image_entry_pointer_applies_to_the_image_that_held_the_entry() {
         ClassicAddressSpace space = createSpace();
         SpriteImagePool pool = new SpriteImagePool(1);
-        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool);
+        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool, () -> null);
 
         graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
-        writeBytes(space, GRP_ADDRESS, createGrp());
+        writeBytes(space, GRP_ADDRESS, ImageFileScenario.createGrp(GRP_ADDRESS));
 
         SpriteImage image = createImage(pool);
 
@@ -303,8 +231,8 @@ final class ClassicImageGraphicsTest {
     void a_write_decodes_the_frames_whose_bytes_it_changes() throws IOException {
         ClassicAddressSpace space = createSpace();
         SpriteImagePool pool = new SpriteImagePool(POOL_CAPACITY);
-        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool);
-        byte[] grp = createGrp();
+        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool, () -> null);
+        byte[] grp = ImageFileScenario.createGrp(GRP_ADDRESS);
 
         graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
         space.writeDword(ClassicImageGraphics.GRP_TABLE + IMAGE_TYPE * Integer.BYTES, GRP_ADDRESS);
@@ -346,7 +274,7 @@ final class ClassicImageGraphicsTest {
     void a_grp_takes_a_word_of_frames_and_decodes_the_drawn_ones() throws IOException {
         ClassicAddressSpace space = createSpace();
         SpriteImagePool pool = new SpriteImagePool(1);
-        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool);
+        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool, () -> null);
         byte[] grp = createLargeGrp();
 
         space.add(new ClassicStorageRegion(LARGE_GRP_ADDRESS, grp.length));
@@ -369,7 +297,7 @@ final class ClassicImageGraphicsTest {
     void a_written_frame_applies_until_the_image_changes_its_own_frame() {
         ClassicAddressSpace space = createSpace();
         SpriteImagePool pool = new SpriteImagePool(1);
-        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool);
+        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool, () -> null);
         int frameField = ClassicImageGraphics.IMAGE_ARRAY + ClassicImageGraphics.IMAGE_FRAME_OFFSET;
 
         graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
@@ -392,7 +320,7 @@ final class ClassicImageGraphicsTest {
     void a_written_frame_waits_for_a_readable_grp_of_the_image() {
         ClassicAddressSpace space = createSpace();
         SpriteImagePool pool = new SpriteImagePool(1);
-        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool);
+        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool, () -> null);
 
         graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
 
@@ -405,7 +333,7 @@ final class ClassicImageGraphicsTest {
         Assertions.assertNull(graphics.findImageSheet(image));
         Assertions.assertEquals(-1, graphics.findImageFrame(image), "the installed graphics draw the image's own frame");
 
-        writeBytes(space, GRP_ADDRESS, createGrp());
+        writeBytes(space, GRP_ADDRESS, ImageFileScenario.createGrp(GRP_ADDRESS));
 
         Assertions.assertEquals(WRITTEN_FRAME, graphics.findImageFrame(image));
     }
@@ -414,10 +342,10 @@ final class ClassicImageGraphicsTest {
     void an_anim_pointer_draws_its_anim_in_hd_and_hd2_and_keeps_the_installed_classic_graphics() {
         ClassicAddressSpace space = createAnimSpace();
         SpriteImagePool pool = new SpriteImagePool(1);
-        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool);
+        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool, () -> null);
 
         graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
-        writeBytes(space, ANIM_MEMORY, createAnim(EmbeddedAnim.HD_SCALE));
+        writeBytes(space, ANIM_MEMORY, ImageFileScenario.createAnim(EmbeddedAnim.HD_SCALE));
 
         SpriteImage image = createImage(pool);
 
@@ -429,12 +357,12 @@ final class ClassicImageGraphicsTest {
         Assertions.assertNull(graphics.findImageSheet(image), "the classic graphics stay installed");
         Assertions.assertEquals(-1, graphics.findImageTypeId(image));
 
-        TextureSheet sheet = awaitSheet(animation, EmbeddedAnim.HD_SCALE);
+        TextureSheet sheet = ImageFileScenario.awaitSheet(animation, EmbeddedAnim.HD_SCALE);
 
         Assertions.assertEquals(1, sheet.getFrameCount());
-        Assertions.assertEquals(ANIM_CANVAS, sheet.getWidth());
+        Assertions.assertEquals(ImageFileScenario.ANIM_CANVAS, sheet.getWidth());
         Assertions.assertEquals(1, sheet.getUnitsPerTexel());
-        Assertions.assertNotNull(sheet.findLayer(DIFFUSE_LAYER_NAME));
+        Assertions.assertNotNull(sheet.findLayer(ImageFileScenario.DIFFUSE_LAYER_NAME));
         Assertions.assertSame(sheet, animation.findSheet(EmbeddedAnim.HD2_SCALE), "HD2 draws the HD anim without an HD2 anim");
         Assertions.assertSame(sheet, animation.findSheet(EmbeddedAnim.HD_SCALE), "the sheet is kept while its bytes are unchanged");
     }
@@ -443,8 +371,8 @@ final class ClassicImageGraphicsTest {
     void a_grp_links_its_hd_and_hd2_anims() {
         ClassicAddressSpace space = createAnimSpace();
         SpriteImagePool pool = new SpriteImagePool(1);
-        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool);
-        byte[] grp = createGrp();
+        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool, () -> null);
+        byte[] grp = ImageFileScenario.createGrp(GRP_ADDRESS);
 
         // The test GRP's frame addresses are absolute at GRP_ADDRESS: relocate them to the linked GRP.
         ByteBuffer relocated = ByteBuffer.wrap(grp).order(ByteOrder.LITTLE_ENDIAN);
@@ -454,8 +382,8 @@ final class ClassicImageGraphicsTest {
 
         graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
         writeBytes(space, LINKED_GRP_ADDRESS, grp);
-        writeBytes(space, LINKED_GRP_ADDRESS + HD_ANIM_OFFSET, createAnim(EmbeddedAnim.HD_SCALE));
-        writeBytes(space, LINKED_GRP_ADDRESS + HD2_ANIM_OFFSET, createAnim(EmbeddedAnim.HD2_SCALE));
+        writeBytes(space, LINKED_GRP_ADDRESS + HD_ANIM_OFFSET, ImageFileScenario.createAnim(EmbeddedAnim.HD_SCALE));
+        writeBytes(space, LINKED_GRP_ADDRESS + HD2_ANIM_OFFSET, ImageFileScenario.createAnim(EmbeddedAnim.HD2_SCALE));
         space.writeDword(LINKED_GRP_ADDRESS - EmbeddedGraphics.LINK_SIZE, EmbeddedGraphics.LINK_MAGIC);
         space.writeDword(LINKED_GRP_ADDRESS - EmbeddedGraphics.LINK_SIZE + LINK_HD_OFFSET, HD_ANIM_OFFSET);
         space.writeDword(LINKED_GRP_ADDRESS - EmbeddedGraphics.LINK_SIZE + LINK_HD2_OFFSET, HD2_ANIM_OFFSET);
@@ -470,12 +398,13 @@ final class ClassicImageGraphicsTest {
         Assertions.assertNotNull(grpSheet);
         Assertions.assertEquals(2, grpSheet.getFrameCount());
         Assertions.assertNotNull(animation);
-        Assertions.assertEquals(1, awaitSheet(animation, EmbeddedAnim.HD_SCALE).getUnitsPerTexel());
-        Assertions.assertEquals(2, awaitSheet(animation, EmbeddedAnim.HD2_SCALE).getUnitsPerTexel());
+        Assertions.assertEquals(1, ImageFileScenario.awaitSheet(animation, EmbeddedAnim.HD_SCALE).getUnitsPerTexel());
+        Assertions.assertEquals(2, ImageFileScenario.awaitSheet(animation, EmbeddedAnim.HD2_SCALE).getUnitsPerTexel());
 
         space.writeDword(LINKED_GRP_ADDRESS - EmbeddedGraphics.LINK_SIZE + LINK_HD_OFFSET, 0);
 
-        Assertions.assertEquals(2, awaitSheet(animation, EmbeddedAnim.HD_SCALE).getUnitsPerTexel(), "HD draws the HD2 anim without an HD anim");
+        Assertions.assertEquals(2, ImageFileScenario.awaitSheet(animation, EmbeddedAnim.HD_SCALE).getUnitsPerTexel(),
+                                "HD draws the HD2 anim without an HD anim");
 
         space.writeDword(LINKED_GRP_ADDRESS - EmbeddedGraphics.LINK_SIZE, 0);
 
@@ -487,8 +416,8 @@ final class ClassicImageGraphicsTest {
     void a_write_to_an_anim_parses_it_again() {
         ClassicAddressSpace space = createAnimSpace();
         SpriteImagePool pool = new SpriteImagePool(1);
-        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool);
-        byte[] anim = createAnim(EmbeddedAnim.HD_SCALE);
+        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool, () -> null);
+        byte[] anim = ImageFileScenario.createAnim(EmbeddedAnim.HD_SCALE);
 
         graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
         writeBytes(space, ANIM_MEMORY, anim);
@@ -501,10 +430,10 @@ final class ClassicImageGraphicsTest {
 
         Assertions.assertNotNull(animation);
 
-        TextureSheet first = awaitSheet(animation, EmbeddedAnim.HD_SCALE);
+        TextureSheet first = ImageFileScenario.awaitSheet(animation, EmbeddedAnim.HD_SCALE);
 
         // Moves the frame on the canvas.
-        space.writeDword(ANIM_MEMORY + ANIM_FRAME_TABLE + 4, 2 | 3 << Short.SIZE);
+        space.writeDword(ANIM_MEMORY + ImageFileScenario.ANIM_FRAME_TABLE + 4, 2 | 3 << Short.SIZE);
 
         Assertions.assertSame(first, animation.findSheet(EmbeddedAnim.HD_SCALE), "the sheet parsed last stays until the new one is ready");
 
@@ -526,11 +455,11 @@ final class ClassicImageGraphicsTest {
     void a_malformed_anim_gives_no_sheet() throws InterruptedException {
         ClassicAddressSpace space = createAnimSpace();
         SpriteImagePool pool = new SpriteImagePool(1);
-        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool);
-        byte[] anim = createAnim(EmbeddedAnim.HD_SCALE);
+        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool, () -> null);
+        byte[] anim = ImageFileScenario.createAnim(EmbeddedAnim.HD_SCALE);
 
         // Breaks the DDS magic of the diffuse layer.
-        anim[ANIM_TEXTURE] = 0;
+        anim[ImageFileScenario.ANIM_TEXTURE] = 0;
 
         graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
         writeBytes(space, ANIM_MEMORY, anim);
@@ -555,7 +484,7 @@ final class ClassicImageGraphicsTest {
     void a_copied_installed_table_pointer_draws_the_installed_graphics_of_its_image() {
         ClassicAddressSpace space = createSpace();
         SpriteImagePool pool = new SpriteImagePool(1);
-        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool);
+        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool, () -> null);
 
         new ClassicGrpTableStructure().provide(new ClassicMemorySink(space), new ClassicHeap());
         graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
@@ -582,7 +511,7 @@ final class ClassicImageGraphicsTest {
     void a_written_render_function_selects_its_draw_function_until_the_image_changes_its_own() {
         ClassicAddressSpace space = createSpace();
         SpriteImagePool pool = new SpriteImagePool(1);
-        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool);
+        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool, () -> null);
         int renderField = ClassicImageGraphics.IMAGE_ARRAY + ClassicImageGraphics.IMAGE_RENDER_OFFSET;
 
         graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
@@ -602,5 +531,112 @@ final class ClassicImageGraphicsTest {
         image.setModifier(SpriteImage.MODIFIER_REMAPPING);
 
         Assertions.assertEquals(-1, graphics.findImageDrawFunction(image));
+    }
+
+    @Test
+    void a_script_replacement_wins_over_the_eud_pointers_of_its_image() throws IOException {
+        ClassicAddressSpace space = createSpace();
+        SpriteImagePool pool = new SpriteImagePool(1);
+        ImageReplacements replacements = new ImageReplacements(() -> null);
+        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool, () -> replacements);
+        byte[] anim = ImageFileScenario.createAnim(EmbeddedAnim.HD_SCALE);
+        ImageGraphics replaced = ImageGraphics.of(null, replacements.readAnim(anim, 0, anim.length, "replaced.anim"), null);
+
+        graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
+        writeBytes(space, GRP_ADDRESS, ImageFileScenario.createGrp(GRP_ADDRESS));
+        space.writeDword(ClassicImageGraphics.GRP_TABLE + IMAGE_TYPE * Integer.BYTES, GRP_ADDRESS);
+
+        SpriteImage image = createImage(pool);
+
+        Assertions.assertNotNull(graphics.findImageSheet(image), "the EUD GRP applies without a replacement");
+
+        replacements.replaceImage(IMAGE_TYPE, replaced);
+
+        Assertions.assertNull(graphics.findImageSheet(image), "the replacement without a GRP keeps the installed GRP");
+        Assertions.assertSame(replaced, graphics.findImageAnimation(image));
+        Assertions.assertEquals(-1, graphics.findImageTypeId(image));
+
+        replacements.restoreImage(IMAGE_TYPE);
+
+        Assertions.assertNotNull(graphics.findImageSheet(image), "the EUD GRP applies again");
+        Assertions.assertNull(graphics.findImageAnimation(image));
+    }
+
+    @Test
+    void a_script_frame_draw_function_and_graphics_of_one_image_win_until_the_image_changes_or_its_slot_is_reused() throws IOException {
+        ClassicAddressSpace space = createSpace();
+        SpriteImagePool pool = new SpriteImagePool(1);
+        ImageReplacements replacements = new ImageReplacements(() -> null);
+        ClassicImageGraphics graphics = new ClassicImageGraphics(() -> pool, () -> replacements);
+        byte[] anim = ImageFileScenario.createAnim(EmbeddedAnim.HD_SCALE);
+        ImageGraphics replaced = ImageGraphics.of(null, replacements.readAnim(anim, 0, anim.length, "replaced.anim"), null);
+
+        graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
+
+        SpriteImage image = createImage(pool);
+        int frameField = ClassicImageGraphics.IMAGE_ARRAY + image.getIndex() * ClassicImageGraphics.IMAGE_ENTRY_SIZE +
+                         ClassicImageGraphics.IMAGE_FRAME_OFFSET;
+
+        space.writeDword(frameField, WRITTEN_FRAME << Short.SIZE);
+        replacements.setImageFrame(image, SCRIPT_FRAME);
+        replacements.setImageDrawFunction(image, SpriteImage.MODIFIER_HALLUCINATION);
+        replacements.replaceImageGraphics(image, replaced);
+
+        Assertions.assertEquals(SCRIPT_FRAME, graphics.findImageFrame(image), "the script frame wins over the EUD write");
+        Assertions.assertEquals(SpriteImage.MODIFIER_HALLUCINATION, graphics.findImageDrawFunction(image));
+        Assertions.assertSame(replaced, graphics.findImageAnimation(image));
+
+        replacements.setImageFrame(image, -1);
+
+        Assertions.assertEquals(WRITTEN_FRAME, graphics.findImageFrame(image), "the EUD frame applies again");
+
+        replacements.setImageFrame(image, SCRIPT_FRAME);
+        image.setFrameIndex(1);
+        image.setModifier(SpriteImage.MODIFIER_SHADOW);
+
+        Assertions.assertEquals(-1, graphics.findImageFrame(image), "the image changed its own frame");
+        Assertions.assertEquals(-1, graphics.findImageDrawFunction(image), "the image changed its own draw function");
+        Assertions.assertSame(replaced, graphics.findImageAnimation(image), "the graphics last while the image lives");
+
+        pool.recycle(image);
+
+        SpriteImage reused = createImage(pool);
+
+        Assertions.assertSame(image, reused);
+        Assertions.assertNull(graphics.findImageAnimation(reused), "a new image in the slot has no script graphics");
+
+        pool.recycle(reused);
+
+        Assertions.assertThrows(IllegalArgumentException.class, () -> replacements.setImageFrame(reused, SCRIPT_FRAME),
+                                "a free slot takes no frame");
+    }
+
+    @Test
+    void a_held_frame_stays_through_the_frame_steps_of_the_image_until_it_is_released() {
+        SpriteImagePool pool = new SpriteImagePool(1);
+        ImageReplacements replacements = new ImageReplacements(() -> null);
+        SpriteImage image = createImage(pool);
+
+        replacements.holdImageFrame(image, SCRIPT_FRAME);
+        image.setFrameIndex(1);
+        image.setFrameIndex(2);
+
+        Assertions.assertEquals(SCRIPT_FRAME, replacements.findImageFrame(image), "the held frame stays while the image steps its frame");
+
+        replacements.setImageFrame(image, SCRIPT_FRAME);
+        image.setFrameIndex(3);
+
+        Assertions.assertEquals(-1, replacements.findImageFrame(image), "a set frame replaces the held one and ends at the next step");
+
+        replacements.holdImageFrame(image, SCRIPT_FRAME);
+        replacements.holdImageFrame(image, -1);
+
+        Assertions.assertEquals(-1, replacements.findImageFrame(image), "a released frame draws the image's own frame");
+
+        replacements.holdImageFrame(image, SCRIPT_FRAME);
+        pool.recycle(image);
+        replacements.removeFreedUnits();
+
+        Assertions.assertEquals(-1, replacements.findImageFrame(createImage(pool)), "a new image in the slot holds no frame");
     }
 }

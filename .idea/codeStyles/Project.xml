@@ -7,6 +7,7 @@
         <fileSet type="globPattern" pattern="*.json" />
         <fileSet type="globPattern" pattern="*.md" />
         <fileSet type="globPattern" pattern="*.svg" />
+        <fileSet type="globPattern" pattern="src/test/resources/org/fogofwarlabs/sc4j/screnhanced/script/runtime/typescript/**" />
       </list>
     </option>
     <JavaCodeStyleSettings>
@@ -45,8 +46,24 @@
       <option name="ENUM_CONSTANTS_WRAP" value="2" />
       <option name="WRAP_ON_TYPING" value="0" />
     </codeStyleSettings>
+    <codeStyleSettings language="JavaScript">
+      <option name="RIGHT_MARGIN" value="150" />
+      <option name="ALIGN_MULTILINE_CHAINED_METHODS" value="true" />
+      <option name="ALIGN_MULTILINE_PARAMETERS_IN_CALLS" value="true" />
+      <option name="ALIGN_MULTILINE_BINARY_OPERATION" value="true" />
+      <option name="ALIGN_MULTILINE_TERNARY_OPERATION" value="true" />
+      <option name="ALIGN_MULTILINE_ARRAY_INITIALIZER_EXPRESSION" value="true" />
+    </codeStyleSettings>
     <codeStyleSettings language="Markdown">
       <option name="RIGHT_MARGIN" value="1000" />
+    </codeStyleSettings>
+    <codeStyleSettings language="TypeScript">
+      <option name="RIGHT_MARGIN" value="150" />
+      <option name="ALIGN_MULTILINE_CHAINED_METHODS" value="true" />
+      <option name="ALIGN_MULTILINE_PARAMETERS_IN_CALLS" value="true" />
+      <option name="ALIGN_MULTILINE_BINARY_OPERATION" value="true" />
+      <option name="ALIGN_MULTILINE_TERNARY_OPERATION" value="true" />
+      <option name="ALIGN_MULTILINE_ARRAY_INITIALIZER_EXPRESSION" value="true" />
     </codeStyleSettings>
     <codeStyleSettings language="yaml">
       <option name="SPACE_WITHIN_BRACKETS" value="false" />

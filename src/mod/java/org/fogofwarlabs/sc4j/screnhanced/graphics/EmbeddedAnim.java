@@ -4,7 +4,6 @@ import org.fogofwarlabs.sc4j.base.exception.Exceptions;
 import org.fogofwarlabs.sc4j.engine.resource.graphics.TextureSheet;
 import org.fogofwarlabs.sc4j.scr.data.format.image.AnimFile;
 import org.fogofwarlabs.sc4j.scr.data.resource.importer.AnimTextureUtils;
-import org.fogofwarlabs.sc4j.scr.game.trigger.eud.ClassicMemoryView;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -119,10 +118,31 @@ final class EmbeddedAnim {
      *
      * @param data the anim bytes
      * @return the texture sheet
-     * @throws IOException if the bytes are no single-entry anim of scale {@code 4} or {@code 2} with a canvas and a block-compressed
-     *                     {@code diffuse} layer
+     * @throws IOException if the bytes are no single-entry anim of scale {@code 4} or {@code 2} with a canvas and a block-compressed {@code diffuse} layer
      */
     static @NotNull TextureSheet parse(byte @NotNull [] data) throws IOException {
+        return AnimTextureUtils.createSheet(readFile(data));
+    }
+
+    /**
+     * Checks that anim bytes parse into a texture sheet ({@link #parse}), and reads their asset scale.
+     *
+     * @param data the anim bytes
+     * @return the asset scale: {@value #HD_SCALE} or {@value #HD2_SCALE}
+     * @throws IOException if the bytes are no single-entry anim of scale {@code 4} or {@code 2} with a canvas and a block-compressed {@code diffuse} layer
+     */
+    static int check(byte @NotNull [] data) throws IOException {
+        AnimFile file = readFile(data);
+
+        AnimTextureUtils.createSheet(file);
+
+        return file.getScale();
+    }
+
+    /**
+     * Reads anim bytes as a single-entry anim of scale {@code 4} or {@code 2} with a canvas and a {@code diffuse} layer, without its textures.
+     */
+    private static @NotNull AnimFile readFile(byte @NotNull [] data) throws IOException {
         AnimFile file = AnimFile.parse(data);
 
         if (file.getEntryCount() != 1 || file.getScale() != HD_SCALE && file.getScale() != HD2_SCALE) {
@@ -136,11 +156,34 @@ final class EmbeddedAnim {
             throw Exceptions.newIOException("The anim has no frames on a canvas or no diffuse layer.");
         }
 
-        return AnimTextureUtils.createSheet(file);
+        return file;
     }
 
 
-    private final @NotNull ClassicMemoryView memory;
+    /**
+     * Finds the texture sheet drawn at an asset scale: the anim of that scale, else the anim of the other scale. A sheet that is not parsed yet
+     * starts its parse and is not returned until it is ready; meanwhile the anim of the drawn scale gives the sheet it parsed last, and the
+     * anim of the other scale is asked only when the drawn scale has no anim or its anim parses nothing.
+     *
+     * @param scale   the asset scale drawn: {@value #HD_SCALE} for HD, {@value #HD2_SCALE} for HD2
+     * @param hdAnim  the HD anim, or {@code null} for none
+     * @param hd2Anim the HD2 anim, or {@code null} for none
+     * @return the texture sheet, or {@code null} if no anim is ready
+     */
+    static @Nullable TextureSheet findSheet(int scale, @Nullable EmbeddedAnim hdAnim, @Nullable EmbeddedAnim hd2Anim) {
+        EmbeddedAnim first = scale == HD2_SCALE ? hd2Anim : hdAnim;
+        EmbeddedAnim second = scale == HD2_SCALE ? hdAnim : hd2Anim;
+        TextureSheet sheet = first == null ? null : first.findSheet();
+
+        if (sheet != null || first != null && first.isParsing() || second == null) {
+            return sheet;
+        }
+
+        return second.findSheet();
+    }
+
+
+    private final @NotNull EmbeddedMemory memory;
     private final int address;
     private final @NotNull Cache cache;
 
@@ -165,11 +208,11 @@ final class EmbeddedAnim {
     /**
      * Creates an {@link EmbeddedAnim} instance for an address, read on first use.
      *
-     * @param memory  the memory view the bytes are read and observed through
+     * @param memory  the memory the bytes are read and observed through
      * @param address the address of the anim header
      * @param cache   the parsed sheets of the game
      */
-    EmbeddedAnim(@NotNull ClassicMemoryView memory, int address, @NotNull Cache cache) {
+    EmbeddedAnim(@NotNull EmbeddedMemory memory, int address, @NotNull Cache cache) {
         this.memory  = memory;
         this.address = address;
         this.cache   = cache;

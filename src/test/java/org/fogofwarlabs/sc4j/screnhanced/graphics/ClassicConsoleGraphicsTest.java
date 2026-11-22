@@ -1,7 +1,10 @@
 package org.fogofwarlabs.sc4j.screnhanced.graphics;
 
+import org.fogofwarlabs.sc4j.engine.resource.graphics.Picture;
+import org.fogofwarlabs.sc4j.engine.resource.graphics.PixelLayer;
 import org.fogofwarlabs.sc4j.engine.resource.graphics.SpriteFrame;
 import org.fogofwarlabs.sc4j.engine.resource.graphics.SpriteSheet;
+import org.fogofwarlabs.sc4j.scr.game.extension.ScrConsoleArt;
 import org.fogofwarlabs.sc4j.scr.game.extension.ScrConsolePlacement;
 import org.fogofwarlabs.sc4j.scr.game.extension.ScrScreenOverlay;
 import org.fogofwarlabs.sc4j.scr.game.trigger.eud.ClassicAddressSpace;
@@ -18,7 +21,8 @@ import org.junit.jupiter.api.Test;
  * Checks the classic console: a written dialog rectangle moves the dialog, the text box included, a written control rectangle moves the control in
  * its dialog, a cleared visible flag hides the control, a written picture size hides the dialog and shows its picture at its rectangle, and a
  * written console transparency shows the console and the pictures only at its shown pixels, a console area owner shows its written picture, and
- * written resource icons replace the installed ones.
+ * written resource icons replace the installed ones; a map script's console settings, those of the controls included, win over EUD memory for
+ * the items they set until the script restores them.
  */
 final class ClassicConsoleGraphicsTest {
     private static final int WIDTH = ClassicMemory.SCREEN_WIDTH;
@@ -86,6 +90,12 @@ final class ClassicConsoleGraphicsTest {
     private static final int CONSOLE_AREAS_SIZE = 0x48;
     private static final int AREA_OWNER = 0x0F400000;
     private static final int AREA_PICTURE = 0x0F410000;
+    /**
+     * A place and a colour that a map script sets.
+     */
+    private static final int SCRIPT_LEFT = 20;
+    private static final int SCRIPT_TOP = 30;
+    private static final int SCRIPT_COLOR = 0xFF102030;
 
     private static @NotNull ClassicAddressSpace createSpace() {
         ClassicAddressSpace space = new ClassicAddressSpace();
@@ -117,7 +127,7 @@ final class ClassicConsoleGraphicsTest {
     }
 
     private static @NotNull ClassicConsoleGraphics observe(@NotNull ClassicAddressSpace space) {
-        ClassicConsoleGraphics graphics = new ClassicConsoleGraphics();
+        ClassicConsoleGraphics graphics = new ClassicConsoleGraphics(() -> null);
 
         graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
 
@@ -336,5 +346,106 @@ final class ClassicConsoleGraphicsTest {
 
         Assertions.assertEquals(3, surfaces.getShownCount());
         Assertions.assertEquals(1, surfaces.getPixel(first));
+    }
+
+    @Test
+    void script_settings_win_over_eud_memory_item_by_item() {
+        ClassicAddressSpace space = createSpace();
+        ConsoleSettings settings = new ConsoleSettings();
+        ClassicConsoleGraphics graphics = new ClassicConsoleGraphics(() -> settings);
+        Picture art = new Picture(2, 1, PixelLayer.ofRgba(new int[]{SCRIPT_COLOR, 0}));
+        Picture icon = new Picture(1, 1, PixelLayer.ofRgba(new int[]{SCRIPT_COLOR}));
+
+        graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
+
+        Assertions.assertNull(graphics.findConsolePlacement(), "nothing set yet");
+
+        settings.setDialogPosition(ScrConsolePlacement.Dialog.PORTRAIT, SCRIPT_LEFT, SCRIPT_TOP);
+
+        ScrConsolePlacement placement = graphics.findConsolePlacement();
+
+        Assertions.assertNotNull(placement, "a script setting places the console without EUD writes");
+        Assertions.assertEquals(SCRIPT_LEFT, placement.getDialogLeft(ScrConsolePlacement.Dialog.PORTRAIT));
+
+        space.writeDword(getDialog(MENU) + ClassicDialogStructure.RECTANGLE_OFFSET, MENU_TOP << Short.SIZE | MENU_LEFT);
+        space.writeDword(getDialog(TEXT_BOX) + ClassicDialogStructure.RECTANGLE_OFFSET, TEXT_BOX_TOP << Short.SIZE | TEXT_BOX_LEFT);
+        writePicture(space);
+        settings.setDialogPosition(ScrConsolePlacement.Dialog.MENU, SCRIPT_LEFT, SCRIPT_TOP);
+        settings.setDialogVisible(ScrConsolePlacement.Dialog.SELECTION, true);
+        settings.setDialogVisible(ScrConsolePlacement.Dialog.COMMAND_CARD, false);
+
+        placement = graphics.findConsolePlacement();
+
+        Assertions.assertNotNull(placement);
+        Assertions.assertEquals(SCRIPT_LEFT, placement.getDialogLeft(ScrConsolePlacement.Dialog.MENU), "the script position wins");
+        Assertions.assertEquals(SCRIPT_TOP, placement.getDialogTop(ScrConsolePlacement.Dialog.MENU));
+        Assertions.assertEquals(TEXT_BOX_LEFT, placement.getDialogLeft(ScrConsolePlacement.Dialog.TEXT_BOX), "EUD drives the unset items");
+        Assertions.assertFalse(placement.isDialogHidden(ScrConsolePlacement.Dialog.SELECTION), "the script visibility wins over the picture");
+        Assertions.assertEquals(PICTURE_LEFT, placement.getDialogLeft(ScrConsolePlacement.Dialog.SELECTION));
+        Assertions.assertTrue(placement.isDialogHidden(ScrConsolePlacement.Dialog.COMMAND_CARD));
+        Assertions.assertEquals(3, placement.getSurfaces().getShownCount(), "the EUD picture stays");
+
+        settings.setDialogVisible(ScrConsolePlacement.Dialog.COMMAND_CARD, true);
+
+        Assertions.assertFalse(graphics.findConsolePlacement().isDialogHidden(ScrConsolePlacement.Dialog.COMMAND_CARD));
+        Assertions.assertFalse(graphics.findConsolePlacement().isDialogMoved(ScrConsolePlacement.Dialog.COMMAND_CARD));
+
+        for (int index = 0; index < ICON_GRP.length; index++) {
+            space.writeDword(ICONS + index * Integer.BYTES, ICON_GRP[index]);
+        }
+
+        settings.setResourceIcon(0, icon);
+        settings.setArt(ScrConsoleArt.CONSOLE_RIGHT, art);
+
+        Assertions.assertFalse(graphics.isConsoleHidden());
+        Assertions.assertSame(icon, graphics.findResourceIconPicture(0));
+        Assertions.assertNull(graphics.findResourceIconPicture(1), "EUD memory drives the other icons");
+        Assertions.assertNotNull(graphics.findResourceIcons());
+        Assertions.assertSame(art, graphics.findConsoleArt(ScrConsoleArt.CONSOLE_RIGHT));
+        Assertions.assertNull(graphics.findConsoleArt(ScrConsoleArt.CONSOLE_LEFT), "each art file on its own");
+
+        settings.setConsoleVisible(false);
+
+        Assertions.assertTrue(graphics.isConsoleHidden());
+    }
+
+    @Test
+    void script_control_settings_win_over_eud_memory_until_restored() {
+        ClassicAddressSpace space = createSpace();
+        ConsoleSettings settings = new ConsoleSettings();
+        ClassicConsoleGraphics graphics = new ClassicConsoleGraphics(() -> settings);
+        int secondButton = getDialog(COMMAND_CARD) + ClassicDialogStructure.getControlOffset(SECOND_BUTTON_INDEX);
+
+        graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
+        settings.setControlPosition(ScrConsolePlacement.Dialog.COMMAND_CARD, BUTTON, SCRIPT_LEFT, SCRIPT_TOP);
+        settings.setControlVisible(ScrConsolePlacement.Dialog.MENU, BUTTON, false);
+
+        ScrConsolePlacement placement = graphics.findConsolePlacement();
+
+        Assertions.assertNotNull(placement, "a script control setting places the console without EUD writes");
+        Assertions.assertEquals(SCRIPT_LEFT, placement.getControlLeft(ScrConsolePlacement.Dialog.COMMAND_CARD, BUTTON));
+        Assertions.assertEquals(SCRIPT_TOP, placement.getControlTop(ScrConsolePlacement.Dialog.COMMAND_CARD, BUTTON));
+        Assertions.assertTrue(placement.isControlHidden(ScrConsolePlacement.Dialog.MENU, BUTTON));
+        Assertions.assertFalse(placement.isDialogMoved(ScrConsolePlacement.Dialog.COMMAND_CARD));
+
+        writeUnaligned(space, secondButton + ClassicDialogStructure.FLAGS_OFFSET, 0);
+        settings.setControlVisible(ScrConsolePlacement.Dialog.COMMAND_CARD, SECOND_BUTTON, true);
+
+        placement = graphics.findConsolePlacement();
+
+        Assertions.assertNotNull(placement);
+        Assertions.assertFalse(placement.isControlHidden(ScrConsolePlacement.Dialog.COMMAND_CARD, SECOND_BUTTON), "the script visibility wins");
+        Assertions.assertEquals(SCRIPT_LEFT, placement.getControlLeft(ScrConsolePlacement.Dialog.COMMAND_CARD, BUTTON));
+
+        settings.restoreControl(ScrConsolePlacement.Dialog.COMMAND_CARD, SECOND_BUTTON);
+        settings.restoreControl(ScrConsolePlacement.Dialog.COMMAND_CARD, BUTTON);
+        settings.restoreControl(ScrConsolePlacement.Dialog.MENU, BUTTON);
+
+        placement = graphics.findConsolePlacement();
+
+        Assertions.assertNotNull(placement);
+        Assertions.assertTrue(placement.isControlHidden(ScrConsolePlacement.Dialog.COMMAND_CARD, SECOND_BUTTON), "EUD memory drives it again");
+        Assertions.assertFalse(placement.isControlMoved(ScrConsolePlacement.Dialog.COMMAND_CARD, BUTTON), "a restored control keeps its place");
+        Assertions.assertEquals(0, placement.getPlacedControls(ScrConsolePlacement.Dialog.MENU).length);
     }
 }

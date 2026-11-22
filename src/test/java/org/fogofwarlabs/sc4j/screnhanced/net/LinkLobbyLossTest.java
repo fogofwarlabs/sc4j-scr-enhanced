@@ -156,10 +156,10 @@ final class LinkLobbyLossTest {
         }, "the joiner lists the room");
         joiner.join(listed[0]);
         driver.runUntil(() -> {
-            LanLobby lobby = joiner.getLobby();
+                            LanLobby lobby = joiner.getLobby();
 
-            return joiner.getState() == LanClient.State.LOBBY && lobby != null && lobby.getState() >= LanLobby.STATE_LOBBY;
-        }, () -> Assertions.assertNotEquals(LanClient.State.FAILED, joiner.getState(), () -> "the join failed: " + joiner.getJoinFailure()),
+                            return joiner.getState() == LanClient.State.LOBBY && lobby != null && lobby.getState() >= LanLobby.STATE_LOBBY;
+                        }, () -> Assertions.assertNotEquals(LanClient.State.FAILED, joiner.getState(), () -> "the join failed: " + joiner.getJoinFailure()),
                         "the joiner reaches the lobby");
     }
 

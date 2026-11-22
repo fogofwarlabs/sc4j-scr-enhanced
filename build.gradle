@@ -51,6 +51,8 @@ sourceSets {
 sc4jMod {
     id = 'scr-enhanced'
     sourceSets = [project.sourceSets.mod]
+    // The licence of the bundled Rhino joins LICENSE and NOTICE in META-INF/.
+    licenses.setFrom(files('LICENSE', 'NOTICE', 'licenses/MPL-2.0.txt'))
 }
 
 // The third-party libraries of the SC:R mod modules (LWJGL, FFmpeg/JavaCPP, ...), resolved from the modules themselves so that the clone
@@ -75,6 +77,24 @@ def scrModJarDependencies = configurations.dependencyScope('scrModJar')
 def scrModJarFiles = configurations.resolvable('scrModJarFiles') {
     extendsFrom scrModJarDependencies.get()
     attributes.attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage, 'sc4j-mod-jar'))
+}
+
+// The libraries that scr-enhanced.jar carries (Rhino, the script engine of SC:R Enhanced Script): a mod's class loader holds only the mod jar,
+// so their classes go into the jar. The mod and the tests compile against them.
+def bundledLibraryDependencies = configurations.dependencyScope('bundledLibraries')
+def bundledLibraryFiles = configurations.resolvable('bundledLibraryFiles') {
+    extendsFrom bundledLibraryDependencies.get()
+    attributes {
+        attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage, Usage.JAVA_RUNTIME))
+        attribute(Category.CATEGORY_ATTRIBUTE, objects.named(Category, Category.LIBRARY))
+        attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements, LibraryElements.JAR))
+    }
+}
+configurations.named('modImplementation') {
+    extendsFrom bundledLibraryDependencies.get()
+}
+configurations.named('testImplementation') {
+    extendsFrom bundledLibraryDependencies.get()
 }
 
 // The mod's own classes (package org.fogofwarlabs.sc4j.screnhanced) without the clone, for the unit tests of those classes.
@@ -117,6 +137,8 @@ dependencies {
 
     scrModuleNames.each { name -> scrModules scrModule(name) }
     scrModJar scrModule('scr')
+
+    bundledLibraries 'org.mozilla:rhino:1.8.1'
 }
 
 // The clone tool's tasks. A failure of the tool (a changed SC:R mod file under an overlay file, an overlay file the lock does not record)
@@ -178,7 +200,28 @@ tasks.named('processModResources') {
     dependsOn cloneScrMod
 }
 
-def modJar = tasks.named('jar')
+// The script tool (ScriptTool) with the mod's classes and libraries, relative paths from the repository root: --args="init <folder>",
+// "check <folder>", "pack <map> --script <folder> -o <output> [--protect]", "unpack <map> -o <folder>",
+// "trace <source map> --at <script>:<line>", "trace <source map> --log <file>" or
+// "run <map> --script <folder> [--melee] [--watch] [--install <folder>]". run starts SC:R Enhanced of the install that installMod uses
+// (sc4jMod.install) unless --install names another; run installMod first.
+tasks.register('runScriptTool', JavaExec) {
+    description = 'Runs the script tool: init, check, pack, unpack, trace or run (--args passes the command).'
+    group = 'sc4j'
+    classpath = sourceSets.mod.runtimeClasspath
+    mainClass = 'org.fogofwarlabs.sc4j.screnhanced.script.ScriptTool'
+    def install = sc4jMod.install
+    jvmArgumentProviders.add({
+        install.isPresent() ? ['-Dsc4j.install=' + install.get().asFile.absolutePath] : []
+    } as CommandLineArgumentProvider)
+}
+
+def modJar = tasks.named('jar') {
+    // The classes of the bundled libraries, without their jar metadata; the licence texts come from licenses/ (sc4jMod.licenses).
+    from({ bundledLibraryFiles.get().collect { file -> zipTree(file) } }) {
+        exclude 'META-INF/**', 'module-info.class'
+    }
+}
 
 // The tests read scr-enhanced.jar and scr.jar as a user's mods/ folder has them.
 tasks.withType(Test).configureEach {
@@ -188,9 +231,8 @@ tasks.withType(Test).configureEach {
     jvmArgumentProviders.add({ ['-Dsc4j.scr.jar=' + scrModJarFiles.get().singleFile.absolutePath] } as CommandLineArgumentProvider)
     systemProperty 'sc4j.screnhanced.overlay', overlay.absolutePath
     systemProperty 'sc4j.screnhanced.resources', modResources.absolutePath
-    // The local map check: the map (-Psc4j.screnhanced.classicMap=<file>) and the folder of its drawn sheets, both outside the repository.
+    // The local map check: the map (-Psc4j.screnhanced.classicMap=<file>), outside the repository.
     systemProperty 'sc4j.screnhanced.classicMap', providers.gradleProperty('sc4j.screnhanced.classicMap').getOrElse('')
-    systemProperty 'sc4j.screnhanced.classicMapOutput', providers.gradleProperty('sc4j.screnhanced.classicMapOutput').getOrElse('')
     // The local image map check: the folder of raw test maps (-Psc4j.screnhanced.imageMaps=<folder>), outside the repository.
     systemProperty 'sc4j.screnhanced.imageMaps', providers.gradleProperty('sc4j.screnhanced.imageMaps').getOrElse('')
     jvmArgs '--enable-native-access=ALL-UNNAMED'

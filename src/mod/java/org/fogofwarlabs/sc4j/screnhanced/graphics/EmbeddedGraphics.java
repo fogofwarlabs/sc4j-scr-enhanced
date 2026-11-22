@@ -3,7 +3,6 @@ package org.fogofwarlabs.sc4j.screnhanced.graphics;
 import org.fogofwarlabs.sc4j.base.binary.LittleEndianUtils;
 import org.fogofwarlabs.sc4j.engine.resource.graphics.TextureSheet;
 import org.fogofwarlabs.sc4j.scr.data.resource.ScrImageAnimation;
-import org.fogofwarlabs.sc4j.scr.game.trigger.eud.ClassicMemoryView;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -36,7 +35,7 @@ final class EmbeddedGraphics implements ScrImageAnimation {
     private static final int HEAD_SIZE = 8;
     private static final int BYTE_MASK = 0xFF;
 
-    private final @NotNull ClassicMemoryView memory;
+    private final @NotNull EmbeddedMemory memory;
     private final int pointer;
     private final EmbeddedAnim.@NotNull Cache cache;
 
@@ -60,11 +59,11 @@ final class EmbeddedGraphics implements ScrImageAnimation {
     /**
      * Creates an {@link EmbeddedGraphics} instance for a pointer, read on first use.
      *
-     * @param memory  the memory view the bytes are read and observed through
+     * @param memory  the memory the bytes are read and observed through
      * @param pointer the address the pointer names
      * @param cache   the parsed anim sheets of the game
      */
-    EmbeddedGraphics(@NotNull ClassicMemoryView memory, int pointer, EmbeddedAnim.@NotNull Cache cache) {
+    EmbeddedGraphics(@NotNull EmbeddedMemory memory, int pointer, EmbeddedAnim.@NotNull Cache cache) {
         this.memory  = memory;
         this.pointer = pointer;
         this.cache   = cache;
@@ -119,15 +118,7 @@ final class EmbeddedGraphics implements ScrImageAnimation {
     public @Nullable TextureSheet findSheet(int scale) {
         this.detect();
 
-        EmbeddedAnim first = scale == EmbeddedAnim.HD2_SCALE ? this.hd2Anim : this.hdAnim;
-        EmbeddedAnim second = scale == EmbeddedAnim.HD2_SCALE ? this.hdAnim : this.hd2Anim;
-        TextureSheet sheet = first == null ? null : first.findSheet();
-
-        if (sheet != null || first != null && first.isParsing() || second == null) {
-            return sheet;
-        }
-
-        return second.findSheet();
+        return EmbeddedAnim.findSheet(scale, this.hdAnim, this.hd2Anim);
     }
 
     /**

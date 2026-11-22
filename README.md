@@ -54,6 +54,25 @@ HD draws the HD anim, else the HD2 anim; HD2 draws the HD2 anim, else the HD ani
 
 StarCraft: Remastered and the SC:R mod ignore these writes and show the original graphics.
 
+### 5. Enhanced Script
+
+A map can carry JavaScript (or TypeScript compiled to it) that runs on every player's game in lockstep: hooks for frames, events and input, timers, screen drawing, command card buttons, and access to units, players and the game data.
+
+![A map script with hero picking, skill buttons, aimed skills and a reworked console](docs/images/enhanced-script.webp)
+
+```js
+game.every(Time.fromSeconds(30), () => {
+    game.players.getHumans().forEach((player) => player.addMinerals(50));
+});
+
+/** @param {UnitDiedEvent} event */
+function onUnitDied(event) {
+    game.print(event.getUnitType().getName() + ' died.');
+}
+```
+
+Guide: [Enhanced Script](docs/script.md).
+
 ## Layout
 
 | Path | Contents |
@@ -103,6 +122,8 @@ To update the SC:R mod: `git submodule update --remote scr`, build, merge any st
 
 ## Licence
 
-[Apache License 2.0](LICENSE). Third-party material: [NOTICE](NOTICE).
+[Apache License 2.0](LICENSE). Third-party material: [NOTICE](NOTICE), [`licenses/`](licenses/).
+
+The mod jar carries [Rhino](https://github.com/mozilla/rhino), the script engine of map scripts, under the Mozilla Public License 2.0 ([`licenses/MPL-2.0.txt`](licenses/MPL-2.0.txt)).
 
 StarCraft is a trademark of Blizzard Entertainment, Inc. SC4J is not affiliated with or endorsed by Blizzard Entertainment.

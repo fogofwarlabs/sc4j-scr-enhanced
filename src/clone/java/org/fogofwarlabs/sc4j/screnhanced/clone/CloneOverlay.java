@@ -15,8 +15,7 @@ import java.util.stream.Stream;
 
 /**
  * Holds the overlay of a clone: a folder that mirrors the clone's module folders ({@code scr-client/src/main/...}), whose files replace the
- * cloned files of the same path wholesale or, where the SC:R mod has none, add new ones. The modder edits these files as normal sources and
- * resources.
+ * cloned files of the same path wholesale or, where the SC:R mod has none, add new ones.
  * <p>
  * The lock file records, for every overlay file, the SHA-256 of the SC:R mod file it was made from ({@value #ADDED} for a file the SC:R mod does
  * not have), one {@code <hash>  <path>} line per file in path order; lines starting with {@code #} are comments. The hash does not count line
@@ -128,12 +127,12 @@ public final class CloneOverlay {
     }
 
     /**
-     * Checks the overlay against the lock and the SC:R mod.
+     * Checks the overlay against the lock and the SC:R mod: the lock records every overlay file and no other, and no SC:R mod file under an
+     * overlay file changed after it was recorded. The failure message is one plain line.
      *
      * @param modFolder the SC:R mod folder, which holds the module folders
      * @param taskPath  the path prefix of the build's tasks named in the message, such as {@code :}
-     * @throws IOException if a file cannot be read, the lock does not record an overlay file or records one the overlay does not hold, or
-     *                     the SC:R mod file of an overlay file changed after it was recorded; the message is one plain line
+     * @throws IOException if a file cannot be read or the check fails
      */
     public void check(@NotNull Path modFolder, @NotNull String taskPath) throws IOException {
         List<String> paths = listPaths(this.overlayFolder);

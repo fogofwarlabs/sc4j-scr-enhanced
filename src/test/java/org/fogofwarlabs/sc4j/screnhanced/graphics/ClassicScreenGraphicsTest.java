@@ -9,7 +9,8 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 /**
- * Checks the classic game screen: pixels written to the game screen bitmap are shown from then on, and a game without the bitmap shows none.
+ * Checks the classic game screen: pixels written to the game screen bitmap are shown from then on, a game without the bitmap shows none, and a
+ * map script's pixels go to the same screen.
  */
 final class ClassicScreenGraphicsTest {
     private static final int WIDTH = 640;
@@ -89,5 +90,29 @@ final class ClassicScreenGraphicsTest {
         space.writeDword(PIXELS, WRITTEN_PIXELS);
 
         Assertions.assertNull(graphics.findScreenOverlay());
+    }
+
+    @Test
+    void fill_pixels_should_show_script_pixels_in_the_same_screen_as_eud_writes() {
+        ClassicAddressSpace space = createSpace(true);
+        ClassicScreenGraphics graphics = new ClassicScreenGraphics();
+
+        graphics.fillPixels(-1, 0, 3, 2, 7);
+        graphics.fillPixels(WIDTH - 1, HEIGHT - 1, 5, 5, 9);
+
+        ScrScreenOverlay overlay = graphics.findScreenOverlay();
+
+        Assertions.assertNotNull(overlay);
+        Assertions.assertEquals(WIDTH, overlay.getWidth());
+        Assertions.assertEquals(5, overlay.getShownCount(), "the part outside the screen is ignored");
+        Assertions.assertEquals(7, overlay.getPixel(WIDTH + 1));
+        Assertions.assertEquals(9, overlay.getPixel(WIDTH * HEIGHT - 1));
+
+        graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
+        space.writeDword(PIXELS + CONSOLE_ROW_PIXEL, WRITTEN_PIXELS);
+
+        Assertions.assertSame(overlay, graphics.findScreenOverlay());
+        Assertions.assertEquals(9, overlay.getShownCount());
+        Assertions.assertEquals(7, overlay.getPixel(0));
     }
 }
