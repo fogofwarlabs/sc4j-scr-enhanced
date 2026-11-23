@@ -1,10 +1,10 @@
 // The game of the upper layer: the global game with its groups (game.map with the tileset, the terrain with its creep, the locations and the
 // resources, game.players, game.units, game.switches, game.countdown, game.leaderboard, game.settings, game.vision, game.combat), and the Unit,
-// Player, Location, Tile, Timer, Grp, Anim, Image, Sprite, SpriteImage and Bullet objects they return. One unit, player, location, tile, resource,
-// sprite, sprite image or bullet is always the same object, and one object always has the same groups (player.upgrades, player.vision, unit.timers
-// ...); a unit, sprite, sprite image or bullet object stays with its unit, sprite, image or bullet, and exists() becomes false once it is gone,
-// when its slot holds another one. Hit points, shields and energy are the shown values (core's raw values divided by 256; no shields or energy for
-// a unit without them), supply the shown supply (core's half units divided by 2). The timers of game.every and game.after are counted here, by
+// Player, Location, Tile, Timer, Grp, Anim, Image, Sound, Sprite, SpriteImage and Bullet objects they return. One unit, player, location, tile,
+// resource, sprite, sprite image or bullet is always the same object, and one object always has the same groups (player.upgrades, player.vision,
+// unit.timers ...); a unit, sprite, sprite image or bullet object stays with its unit, sprite, image or bullet, and exists() becomes false once it is
+// gone, when its slot holds another one. Hit points, shields and energy are the shown values (core's raw values divided by 256; no shields or energy
+// for a unit without them), supply the shown supply (core's half units divided by 2). The timers of game.every and game.after are counted here, by
 // frames.
 //
 // The methods that change the game state (the setters, add and subtract, kill, remove, issueOrder, create ...) are shared code only: the core
@@ -54,6 +54,8 @@
     var BulletState = prelude.BulletState;
     var spriteTypePrototype = prelude.spriteTypePrototype;
     var weaponTypePrototype = prelude.weaponTypePrototype;
+    var damageTypePrototype = prelude.damageTypePrototype;
+    var DamageType = prelude.DamageType;
     var drawFunctionPrototype = prelude.drawFunctionPrototype;
     var animationPrototype = prelude.animationPrototype;
 
@@ -258,6 +260,36 @@
         }
 
         return core.unit.damage(id, amount, NONE, requireObject(source, playerPrototype, 'A unit or a player').id);
+    }
+
+    // Runs the weapon damage routine on a unit as a hit does, with a raw base amount, a source unit (its owner is the attacking player) or
+    // player, and the options {weapon: a WeaponType, damageType: a DamageType}; the damage type is by default the weapon's, without a weapon
+    // DamageType.Normal.
+    function applyUnitDamage(id, amount, source, options) {
+        var values = readOptions(options);
+        var sourceId = NONE;
+        var sourcePlayer;
+        var weapon = NONE;
+        var damageType = NONE;
+
+        if (isObjectOf(source, unitPrototype)) {
+            sourceId = requireUnitId(source);
+            sourcePlayer = core.unit.getOwner(sourceId);
+        } else {
+            sourcePlayer = requireObject(source, playerPrototype, 'A unit or a player').id;
+        }
+
+        if (values.weapon !== undefined && values.weapon !== null) {
+            weapon = requireObject(values.weapon, weaponTypePrototype, 'A weapon type').id;
+        }
+
+        if (values.damageType !== undefined && values.damageType !== null) {
+            damageType = requireObject(values.damageType, damageTypePrototype, 'A damage type').id;
+        } else if (weapon === NONE) {
+            damageType = DamageType.Normal.id;
+        }
+
+        return core.unit.applyDamage(id, amount, sourceId, sourcePlayer, weapon, damageType);
     }
 
     // Returns the test of a unit filter: a function of the unit, or an object with an optional type (a UnitType) and owner (a Player).
@@ -479,6 +511,10 @@
         // Takes hit points off the unit as a hit does after armor and shields; a unit whose hit points run out dies, credited to the source.
         damage: function (hp, source) {
             return damageUnit(requireUnitId(this), round(hp * RAW_SCALE), source);
+        },
+        // Hits the unit as a weapon does: the damage decision hooks, shields, armor, the damage type, the death and the kill credit.
+        applyDamage: function (amount, source, options) {
+            return applyUnitDamage(requireUnitId(this), round(amount * RAW_SCALE), source, options);
         },
         remove: function () {
             return core.unit.remove(requireUnitId(this));
@@ -1285,6 +1321,10 @@
             var bit = 1 << requireObject(player, playerPrototype, 'A player').id;
 
             return (core.sprite.getVisibilityFlags(sprites.requireId(this)) & bit) !== 0;
+        },
+        // Removes the sprite of an effect, its images first; false for a sprite of no effect, as that of a unit or a bullet. Shared code only.
+        remove: function () {
+            return core.sprite.remove(sprites.requireId(this));
         }
     };
 
@@ -1519,6 +1559,7 @@
     var grpPrototype = create(resourcePrototype);
     var animPrototype = create(resourcePrototype);
     var imagePrototype = create(resourcePrototype);
+    var soundPrototype = create(resourcePrototype);
 
     // Returns the handle id of an optional resource, NONE when left out.
     function readResourceId(resource, prototype, kind) {
@@ -1576,6 +1617,12 @@
                                    var text = String(name);
 
                                    return getResource(core.resources.getImage(text), text, imagePrototype);
+                               },
+                               // A WAVE or Ogg Vorbis sound to play at a position (display.sound.playAt).
+                               getSound: function (name) {
+                                   var text = String(name);
+
+                                   return getResource(core.resources.getSound(text), text, soundPrototype);
                                },
                                // Any file as UTF-8 text.
                                readText: function (name) {
@@ -2034,7 +2081,7 @@
 
     [unitPrototype, unitTimersPrototype, playerPrototype, playerUpgradesPrototype, playerTechsPrototype, playerUnitsPrototype,
      playerDeathsPrototype, playerKillsPrototype, playerScorePrototype, playerVisionPrototype, locationPrototype, tilePrototype,
-     resourcePrototype, grpPrototype, animPrototype, imagePrototype, timerPrototype, spritePrototype, spriteImagePrototype,
+     resourcePrototype, grpPrototype, animPrototype, imagePrototype, soundPrototype, timerPrototype, spritePrototype, spriteImagePrototype,
      bulletPrototype].forEach(freeze);
 
     return {
@@ -2047,6 +2094,7 @@
             grpPrototype: grpPrototype,
             animPrototype: animPrototype,
             imagePrototype: imagePrototype,
+            soundPrototype: soundPrototype,
             getPlayer: getPlayer,
             getUnit: getUnit,
             getCapturedUnit: getCapturedUnit,

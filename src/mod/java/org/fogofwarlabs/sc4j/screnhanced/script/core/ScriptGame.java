@@ -120,7 +120,7 @@ public final class ScriptGame {
                 .define(ScriptCoreUtils.createNamespace(context, global, core, "console"), global);
         textCore.defineStrings(ScriptCoreUtils.createNamespace(context, global, core, "strings"), global);
         textCore.defineMessages(ScriptCoreUtils.createNamespace(context, global, core, "messages"), global);
-        scriptGame.soundCore.define(ScriptCoreUtils.createNamespace(context, global, core, "sound"), global);
+        scriptGame.soundCore.define(ScriptCoreUtils.createNamespace(context, global, core, "sound"), global, graphicsCore);
         new ScriptButtonCore(scriptGame).define(ScriptCoreUtils.createNamespace(context, global, core, "buttons"), global);
         scriptGame.screenCore = screenCore;
 

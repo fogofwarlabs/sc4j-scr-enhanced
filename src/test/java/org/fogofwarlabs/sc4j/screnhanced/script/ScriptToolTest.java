@@ -156,6 +156,12 @@ final class ScriptToolTest {
         Assertions.assertEquals(1, runTool(ScriptTool.RUN_COMMAND, map.toString(), ScriptTool.WATCH_OPTION));
         Assertions.assertEquals(1, runTool(ScriptTool.RUN_COMMAND, map.toString(), ScriptTool.SCRIPT_OPTION, folder.toString(),
                                            ScriptTool.MELEE_OPTION, ScriptTool.MELEE_OPTION));
+        Assertions.assertEquals(1, runTool(ScriptTool.RUN_COMMAND, map.toString(), ScriptTool.SCRIPT_OPTION, folder.toString(),
+                                           ScriptTool.INSPECT_OPTION + "=port"));
+        Assertions.assertEquals(1, runTool(ScriptTool.RUN_COMMAND, map.toString(), ScriptTool.SCRIPT_OPTION, folder.toString(),
+                                           ScriptTool.INSPECT_OPTION + "=0"));
+        Assertions.assertEquals(1, runTool(ScriptTool.RUN_COMMAND, map.toString(), ScriptTool.SCRIPT_OPTION, folder.toString(),
+                                           ScriptTool.INSPECT_OPTION, ScriptTool.INSPECT_OPTION + "=9340"));
         Assertions.assertEquals(1, runTool(ScriptTool.PACK_COMMAND));
     }
 }

@@ -2,7 +2,10 @@ package org.fogofwarlabs.sc4j.screnhanced.script.core;
 
 import org.fogofwarlabs.sc4j.scr.core.test.RequiresInstallation;
 import org.fogofwarlabs.sc4j.scr.data.type.constant.SpriteIds;
+import org.fogofwarlabs.sc4j.scr.game.sprite.Sprite;
+import org.fogofwarlabs.sc4j.scr.game.sprite.SpriteEffectPool;
 import org.fogofwarlabs.sc4j.scr.game.sprite.SpriteImage;
+import org.fogofwarlabs.sc4j.scr.game.sprite.SpriteSystem;
 import org.fogofwarlabs.sc4j.scr.game.sprite.script.IscriptExecutor;
 import org.fogofwarlabs.sc4j.scr.game.test.GameResourcesExtension;
 import org.fogofwarlabs.sc4j.scr.game.test.InstallationTestResources;
@@ -17,9 +20,9 @@ import java.util.List;
 
 /**
  * Tests {@code core.sprite}, {@code core.image}, the image functions of {@code core.graphics} and the {@code Sprite} and {@code SpriteImage}
- * objects of the prelude in a live melee game: the sprite and images of a unit, a created effect, the frame and draw function a script sets,
- * the end of an object when its sprite is gone and its slot holds another one, the shared and local code checks, and the same game state from
- * the same effects.
+ * objects of the prelude in a live melee game: the sprite and images of a unit, a created and a removed effect, the frame and draw function a
+ * script sets, the end of an object when its sprite is gone and its slot holds another one, the shared and local code checks, and the same
+ * game state from the same effects.
  */
 @RequiresInstallation
 @ExtendWith(GameResourcesExtension.class)
@@ -145,6 +148,57 @@ final class ScriptSpriteCoreTest {
                                         "reused true true true false true",
                                         "local TypeError true",
                                         "local frame true"), scenario.getInfoMessages(), scenario.getLines()::toString);
+    }
+
+    @Test
+    void remove_takes_an_effect_with_its_images_and_refuses_the_sprite_of_a_unit(@NotNull InstallationTestResources resources) throws IOException {
+        LiveScriptGameScenario scenario = LiveScriptGameScenario.startMelee(resources.getGameData(), """
+                                                                                                     var EFFECT = %d;
+                                                                                                     var effect;
+                                                                                                     function attempt(call) {
+                                                                                                         try {
+                                                                                                             return call();
+                                                                                                         } catch (error) {
+                                                                                                             return error.name;
+                                                                                                         }
+                                                                                                     }
+                                                                                                     function onStart() {
+                                                                                                         var human = game.players.getHumans()[0];
+                                                                                                         var commandCenter = game.units.findOne({type: UnitType.TerranCommandCenter, owner: human});
+                                                                                                         var removed = game.createEffect(SpriteType.get(EFFECT), commandCenter.getPosition());
+                                                                                                         var slot = removed.getId();
+                                                                                                         var images = removed.getImages();
+                                                                                                         log.info(images.length > 0, removed.remove(), removed.exists(), core.sprite.exists(slot),
+                                                                                                                  images.every(function (image) { return !image.exists(); }), attempt(function () { return removed.remove(); }),
+                                                                                                                  attempt(function () { return core.sprite.remove(-1); }));
+                                                                                                         log.info(commandCenter.getSprite().remove(), commandCenter.exists(), commandCenter.getSprite().exists());
+                                                                                                         effect = game.createEffect(SpriteType.get(EFFECT), commandCenter.getPosition());
+                                                                                                     }
+                                                                                                     function onLocalFrame() {
+                                                                                                         log.info('local ' + attempt(function () { return effect.remove(); }) + ' ' + effect.exists());
+                                                                                                     }
+                                                                                                     """.formatted(EFFECT));
+
+        scenario.runLocalFrame();
+
+        for (int frame = 0; frame < CHANGE_FRAMES; frame++) {
+            scenario.stepFrame();
+        }
+
+        SpriteSystem sprites = scenario.getGame().getSpriteSystem();
+        SpriteEffectPool effects = sprites.getSpriteEffectPool();
+
+        Assertions.assertNotNull(effects);
+
+        for (int index = effects.getFirstActiveIndex(); index >= 0; index = effects.getNextIndex(index)) {
+            Sprite sprite = effects.getSpriteEffect(index).getSprite();
+
+            Assertions.assertTrue(sprites.requireSpritePool().isAllocated(sprite.getPoolIndex()), "every active effect keeps an allocated sprite");
+        }
+
+        Assertions.assertEquals(List.of("true true false false true Error RangeError",
+                                        "false true true",
+                                        "local TypeError true"), scenario.getInfoMessages(), scenario.getLines()::toString);
     }
 
     @Test

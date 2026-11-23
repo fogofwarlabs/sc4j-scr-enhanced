@@ -203,8 +203,8 @@ tasks.named('processModResources') {
 // The script tool (ScriptTool) with the mod's classes and libraries, relative paths from the repository root: --args="init <folder>",
 // "check <folder>", "pack <map> --script <folder> -o <output> [--protect]", "unpack <map> -o <folder>",
 // "trace <source map> --at <script>:<line>", "trace <source map> --log <file>" or
-// "run <map> --script <folder> [--melee] [--watch] [--install <folder>]". run starts SC:R Enhanced of the install that installMod uses
-// (sc4jMod.install) unless --install names another; run installMod first.
+// "run <map> --script <folder> [--melee] [--watch] [--inspect[=<port>]] [--install <folder>]". run starts SC:R Enhanced of the install that
+// installMod uses (sc4jMod.install) unless --install names another; run installMod first.
 tasks.register('runScriptTool', JavaExec) {
     description = 'Runs the script tool: init, check, pack, unpack, trace or run (--args passes the command).'
     group = 'sc4j'

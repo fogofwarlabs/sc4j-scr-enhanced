@@ -34,10 +34,11 @@ import java.util.stream.Collectors;
 
 /**
  * Tests the script of a map with a script package in a live melee game, run by the game's {@link ScriptSimulationPlugin}: the start and
- * frame hooks, the frame hook while the script pauses the game, live and in the replay, the event hooks with their captured values, the
- * decision hooks that change damage and reject orders, the read-only game in a decision with its refused trigger writes and its local display,
- * the channel messages of shared code and of the local hooks that the game's {@link ScriptInputPlugin} calls, live and in the replay, the hooks
- * of {@code defineHooks}, which play the game as top-level function hooks do, protected too, and a map without a script package.
+ * frame hooks, the frame hook while the script pauses the game, live and in the replay, the event hooks with their captured values and the
+ * position of a death, the decision hooks that change damage, also of {@code applyDamage}, and reject orders, the read-only game in a decision
+ * with its refused trigger writes and its local display, the channel messages of shared code and of the local hooks that the game's
+ * {@link ScriptInputPlugin} calls, live and in the replay, the hooks of {@code defineHooks}, which play the game as top-level function hooks
+ * do, protected too, and a map without a script package.
  */
 @RequiresInstallation
 @ExtendWith(GameResourcesExtension.class)
@@ -325,6 +326,46 @@ final class ScriptSimulationPluginTest {
         scenario.stepUntilPrinted("hit points", FIGHT_FRAMES);
 
         Assertions.assertEquals(List.of("hit points 40 35 true"), scenario.getPrints());
+    }
+
+    @Test
+    void apply_damage_runs_on_before_damage_and_the_death_keeps_the_position(@NotNull InstallationTestResources resources,
+                                                                             @TempDir @NotNull Path folder) throws IOException {
+        ScriptMapGameScenario scenario = ScriptMapGameScenario.startMelee(resources.getGameData(), folder, SPAWN_SCRIPT + """
+                                                                                                                          withoutZergling = true;
+                                                                                                                          var target, deathX, deathY;
+                                                                                                                          var decided = [];
+                                                                                                                          function onBeforeDamage(damage) {
+                                                                                                                              if (damage.getTarget() === target) {
+                                                                                                                                  decided.push((damage.getWeapon() === WeaponType.GaussRifle) + ' ' + damage.getAmount() + ' ' +
+                                                                                                                                               (damage.getSource() === marine) + ' ' + (damage.getSourcePlayer() === human));
+                                                                                                                                  damage.setAmount(damage.getAmount() * 2);
+                                                                                                                              }
+                                                                                                                          }
+                                                                                                                          function afterSpawn(frame) {
+                                                                                                                              if (frame === spawnFrame) {
+                                                                                                                                  target = game.units.create(UnitType.ZergZergling, computer, marine.getPosition());
+                                                                                                                                  target.applyDamage(6, marine, {weapon: WeaponType.GaussRifle});
+                                                                                                                                  var hit = target.getHp();
+                                                                                                                                  target.damage(5, marine);
+                                                                                                                                  game.print('ES hit ' + hit + ' ' + target.getHp() + ' ' + decided.join(','));
+                                                                                                                                  deathX = target.getX();
+                                                                                                                                  deathY = target.getY();
+                                                                                                                                  target.applyDamage(100, human);
+                                                                                                                              }
+                                                                                                                          }
+                                                                                                                          function onUnitDied(event) {
+                                                                                                                              if (event.getUnit() === target) {
+                                                                                                                                  game.print('ES died ' + (event.getPosition().getX() === deathX) + ' ' + (event.getPosition().getY() === deathY) +
+                                                                                                                                             ' ' + (deathX > 0) + ' ' + event.getUnit().exists() + ' ' + (event.getKillerPlayer() === human) + ' ' +
+                                                                                                                                             event.getWeapon() + ' ' + decided[1]);
+                                                                                                                              }
+                                                                                                                          }
+                                                                                                                          """);
+
+        scenario.stepUntilPrinted("died", FIGHT_FRAMES);
+
+        Assertions.assertEquals(List.of("hit 23 18 true 6 true true", "died true true true false true null false 100 false true"), scenario.getPrints());
     }
 
     @Test

@@ -3,6 +3,7 @@ package org.fogofwarlabs.sc4j.screnhanced.script;
 import org.fogofwarlabs.sc4j.scr.game.extension.*;
 import org.fogofwarlabs.sc4j.scr.game.trigger.eud.region.LocalView;
 import org.fogofwarlabs.sc4j.screnhanced.script.input.ScriptLocalInput;
+import org.fogofwarlabs.sc4j.screnhanced.script.inspector.ScriptInspector;
 import org.fogofwarlabs.sc4j.screnhanced.script.runtime.ScriptRuntime;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -120,7 +121,8 @@ public final class ScriptInputPlugin implements ScrGamePlugin {
      * paused replay; not for the frames a replay seek runs.
      * <p>
      * The frame number goes to {@code onLocalFrame}, then {@code onRender} draws, when the game has a script, also in a replay and for an
-     * observer; the script commands that wait then go to the submitter, or are dropped without one.
+     * observer; the script commands that wait then go to the submitter, or are dropped without one, and the client's DevTools console shows its
+     * address in the message area once per game ({@link ScriptInspector#onFramePlayed}).
      *
      * @param frame the number of the frame that ran, the game's current frame
      */
@@ -135,6 +137,7 @@ public final class ScriptInputPlugin implements ScrGamePlugin {
         scriptRuntime.callLocalFrame(frame);
         scriptRuntime.callRender();
         scriptRuntime.submitCommands(this.submitter.get());
+        ScriptInspector.getShared().onFramePlayed(scriptRuntime);
     }
 
     /**

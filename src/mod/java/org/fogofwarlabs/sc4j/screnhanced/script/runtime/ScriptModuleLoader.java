@@ -134,6 +134,13 @@ final class ScriptModuleLoader {
     }
 
     /**
+     * @return the script contents by name, as in the script package
+     */
+    @NotNull Map<String, byte[]> getScripts() {
+        return this.scripts;
+    }
+
+    /**
      * Sets whether local code runs: {@code require} of a module that has not loaded then throws a {@code TypeError}.
      *
      * @param local {@code true} while local code runs
@@ -163,6 +170,33 @@ final class ScriptModuleLoader {
         }
 
         return null;
+    }
+
+    /**
+     * Finds the module of a script name.
+     *
+     * @param name the script name
+     * @return the loaded or loading module, or {@code null} if no module has the name
+     */
+    @Nullable ScriptModule findModule(@NotNull String name) {
+        return this.modulesByName.get(name);
+    }
+
+    /**
+     * Lists the loaded modules.
+     *
+     * @return the modules that have loaded, in the order their loading started
+     */
+    @NotNull List<ScriptModule> getLoadedModules() {
+        List<ScriptModule> loaded = new ArrayList<>();
+
+        for (ScriptModule module : this.modules) {
+            if (module.isLoaded()) {
+                loaded.add(module);
+            }
+        }
+
+        return loaded;
     }
 
     /**

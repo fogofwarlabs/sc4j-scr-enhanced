@@ -19,8 +19,11 @@ import org.fogofwarlabs.sc4j.screnhanced.script.sync.ScriptCommandMessage;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.mozilla.javascript.*;
+import org.mozilla.javascript.debug.Debugger;
 
 import java.io.Serial;
+import java.util.Collections;
+import java.util.Map;
 import java.util.function.Consumer;
 
 /**
@@ -45,6 +48,8 @@ import java.util.function.Consumer;
  * local player's submitter. {@link #callRender} also lets the drawing functions draw: the list of a completed call is the one drawn
  * ({@link #findDrawList()}) until the next call.
  * <p>
+ * {@link #createConsole()} creates a console, whose code runs between the other calls as shared or as local code ({@link ScriptConsole}).
+ * <p>
  * The prelude runs every hook, timer and channel handler through the runtime's host, which guards each call. Each call of {@link #start()},
  * {@link #runFrame(int)}, {@link #decide}, {@link #callLocalInput}, {@link #callLocalFrame} and {@link #callRender} has an instruction budget;
  * a decision that a running call causes, as when a hook issues an order, shares the budget of that call. A shared call that exceeds it, or
@@ -61,6 +66,10 @@ public final class ScriptRuntime {
      * The instruction budget of one call that SC:R Enhanced gives a script.
      */
     public static final int INSTRUCTION_BUDGET = 5_000_000;
+    /**
+     * The log output that writes to the SC:R Enhanced log.
+     */
+    public static final @NotNull ScriptLogOutput LOGGER_OUTPUT = ScriptRuntime::writeToLogger;
 
     private static final @NotNull Logger LOGGER = Logger.of(ScriptRuntime.class);
     private static final @NotNull String LOAD_CALL_NAME = "Loading";
@@ -69,6 +78,7 @@ public final class ScriptRuntime {
     private static final @NotNull String LOCAL_INPUT_CALL_NAME = "localInput";
     private static final @NotNull String LOCAL_FRAME_CALL_NAME = "localFrame";
     private static final @NotNull String RENDER_CALL_NAME = "render";
+    private static final @NotNull String CONSOLE_CALL_NAME = "Console code";
     private static final @NotNull String MODULE_NAME_PROPERTY = "name";
     private static final @NotNull String MODULE_SCOPE_PROPERTY = "scope";
     private static final @NotNull String CONSUMED_PROPERTY = "consumed";
@@ -124,7 +134,7 @@ public final class ScriptRuntime {
      */
     public static @NotNull ScriptRuntime create(@NotNull ScriptPackage scriptPackage, @NotNull Game game, @NotNull ScriptResources resources,
                                                 long seed) {
-        return create(scriptPackage, game, resources, seed, INSTRUCTION_BUDGET, ScriptRuntime::writeToLogger);
+        return create(scriptPackage, game, resources, seed, INSTRUCTION_BUDGET, LOGGER_OUTPUT);
     }
 
     /**
@@ -203,6 +213,7 @@ public final class ScriptRuntime {
     private boolean overran;
     private boolean stopped;
     private boolean disposed;
+    private boolean held;
 
     /**
      * Creates a {@link ScriptRuntime} instance and runs the prelude over the game API and the runtime's host.
@@ -575,6 +586,109 @@ public final class ScriptRuntime {
     }
 
     /**
+     * @return the script contents by name, as in the script package
+     */
+    public @NotNull Map<String, byte[]> getScripts() {
+        return Collections.unmodifiableMap(this.moduleLoader.getScripts());
+    }
+
+    /**
+     * Creates a console of the runtime, whose scope reaches the main script's top-level names ({@link ScriptConsole}).
+     *
+     * @return the created {@link ScriptConsole} instance
+     * @throws IllegalStateException if the runtime has not started or is disposed
+     */
+    public @NotNull ScriptConsole createConsole() {
+        this.checkNotDisposed();
+
+        if (!this.started) {
+            throw Exceptions.newIllegalStateException("The script runtime has not started.");
+        }
+
+        ScriptModule main = this.moduleLoader.findModule(this.mainName);
+
+        try (Context context = this.contextFactory.enterSetupContext()) {
+            return new ScriptConsole(context, this, this.global, this.moduleLoader, main != null && main.isLoaded() ? main.getScope() : this.global);
+        }
+    }
+
+    /**
+     * Sets the debugger of the script calls from the next one on: Rhino reports to it each call and line of the scripts.
+     *
+     * @param debugger the debugger, or {@code null} for none
+     */
+    public void setDebugger(@Nullable Debugger debugger) {
+        this.contextFactory.setDebugger(debugger);
+    }
+
+    /**
+     * Sets whether a debugger holds the current call at a line; console code then runs inside that call.
+     *
+     * @param held {@code true} while the debugger holds the call
+     */
+    public void setHeld(boolean held) {
+        this.held = held;
+    }
+
+    /**
+     * Runs a call of console code within one instruction budget, as shared code, or as local code with the game read-only and local as for
+     * {@link #callLocalInput}; then the promise jobs it queued. An exceeded budget or a Java stack overflow ends the call with a script error
+     * and does not stop the script; console code also runs once the script stopped. While a debugger holds a call ({@link #setHeld}), console
+     * code runs inside it, with its budget and its shared or local rules.
+     *
+     * @param local {@code true} to run local code, {@code false} to run shared code
+     * @param call  the call
+     * @param <T>   the type of the call's result
+     * @return the result of the call
+     * @throws RhinoException        if the call threw a script error, ran more than the budget or overflowed the stack
+     * @throws IllegalStateException if the runtime has not started, is disposed or runs another call
+     */
+    <T> T callConsole(boolean local, ScriptConsole.@NotNull Call<T> call) {
+        this.checkNotDisposed();
+
+        if (!this.started) {
+            throw Exceptions.newIllegalStateException("The script runtime has not started.");
+        }
+
+        if (this.callDepth > 0) {
+            Context current = Context.getCurrentContext();
+
+            if (this.held && current != null) {
+                return call.run(current);
+            }
+
+            throw Exceptions.newIllegalStateException("The script runtime runs another call.");
+        }
+
+        boolean readOnly = this.scriptGame.isReadOnly();
+
+        try (Context context = this.contextFactory.enterOwnContext()) {
+            this.enterCall();
+            this.setLocal(local);
+
+            try {
+                this.prelude.setLocal(context, local);
+
+                T result = call.run(context);
+
+                context.processMicrotasks();
+
+                return result;
+            } catch (ScriptContextFactory.InstructionBudgetError error) {
+                throw Context.reportRuntimeError(Exceptions.format("{0} ran more than the budget of instructions.", CONSOLE_CALL_NAME));
+            } catch (StackOverflowError error) {
+                throw Context.reportRuntimeError(Exceptions.format("{0} overflowed the stack.", CONSOLE_CALL_NAME));
+            } catch (CallAbortedError error) {
+                throw Context.reportRuntimeError("The script stopped.");
+            } finally {
+                this.setLocal(false);
+                this.scriptGame.setReadOnly(readOnly);
+                this.exitCall();
+            }
+        }
+    }
+
+    /**
      * Starts a call into the script: a call while no other call runs gets a new instruction budget.
      */
     private void enterCall() {
@@ -707,8 +821,8 @@ public final class ScriptRuntime {
 
             this.stop(moduleName, Exceptions.format("{0} overflowed the stack; the script stopped.", callName));
         } catch (RhinoException exception) {
-            this.logOutput.write(LogLevel.ERROR, moduleName, Exceptions.format("{0} failed: {1}{2}", callName, exception.details(),
-                                                                               formatScriptLocation(exception)));
+            this.logOutput.writeScriptError(moduleName, Exceptions.format("{0} failed: {1}{2}", callName, exception.details(),
+                                                                          formatScriptLocation(exception)), exception);
 
             return CallResult.FAILED;
         } catch (RuntimeException exception) {

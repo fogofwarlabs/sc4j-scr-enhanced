@@ -33,7 +33,9 @@ import java.util.function.ToIntFunction;
  * pool) and {@code getMainImage(id)} ({@code -1} for none). {@code createEffect(spriteType, x, y, owner, elevation)} creates a sprite that lives
  * as long as its image scripts run, as the game creates the sprite of a spell or of dust ({@code IscriptExecutor.createSpriteEffect}), then
  * sets its elevation and its visibility from the tile below it, as every native caller does; it returns the sprite or {@code -1} when the pools
- * are full. It works in shared code only.
+ * are full. It works in shared code only. {@code remove(id)} removes the sprite of a sprite effect as the game retires a sprite: its images go
+ * back to the image pool first, then the sprite to the sprite pool and its sprite effect to the effect pool. It returns {@code false} for a
+ * sprite of no sprite effect, as a sprite of a unit or a bullet, and works in shared code only.
  * <p>
  * {@code core.image}: {@code getType} (the {@code images.dat} entry), {@code getSprite} ({@code -1} for none), {@code getFrame} (the drawn
  * frame), {@code getDirection} (the frame offset of the direction inside the frame group), {@code getDrawFunction}, {@code getFlags},
@@ -133,6 +135,52 @@ final class ScriptSpriteCore {
 
             return (double) sprite.getPoolIndex();
         });
+        ScriptCoreUtils.defineFunction(global, namespace, "remove", 1, (context, scope, thisObject, arguments) -> {
+            this.scriptGame.checkWritable();
+
+            return this.removeEffect(this.readSprite(arguments, 0));
+        });
+    }
+
+    /**
+     * Removes the sprite of a sprite effect: its images, then the sprite, then the sprite effect; the startup sprite effect stays.
+     *
+     * @param sprite the sprite
+     * @return {@code true} if the sprite belonged to an active sprite effect, {@code false} otherwise
+     * @throws IllegalStateException if the sprite cannot leave its sprite row
+     */
+    private boolean removeEffect(@NotNull Sprite sprite) {
+        Game game = this.scriptGame.getGame();
+        SpriteSystem system = game.getSpriteSystem();
+        SpriteEffectPool effects = system.getSpriteEffectPool();
+
+        if (effects == null) {
+            return false;
+        }
+
+        for (int index = effects.getFirstActiveIndex(); index >= 0; index = effects.getNextIndex(index)) {
+            SpriteEffect effect = effects.getSpriteEffect(index);
+
+            if (effect.getSpriteOrNull() != sprite || effect == system.getStartupSpriteEffect()) {
+                continue;
+            }
+
+            for (SpriteImage image : sprite.getImages()) {
+                system.requireImagePool().recycle(image);
+            }
+
+            sprite.clearImages();
+
+            if (!system.requireSpritePool().recycleEmptySprite(sprite, game.getMap().getHeight())) {
+                throw Exceptions.newIllegalStateException("The sprite {0} could not leave its sprite row.", sprite.getPoolIndex());
+            }
+
+            effects.recycle(effect);
+
+            return true;
+        }
+
+        return false;
     }
 
     /**

@@ -2,8 +2,10 @@ package org.fogofwarlabs.sc4j.screnhanced.script.runtime;
 
 import org.fogofwarlabs.sc4j.base.exception.Exceptions;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.mozilla.javascript.Context;
 import org.mozilla.javascript.ContextFactory;
+import org.mozilla.javascript.debug.Debugger;
 
 import java.io.Serial;
 import java.util.Locale;
@@ -16,7 +18,8 @@ import java.util.TimeZone;
  * and UTC, and limits the interpreter stack depth. The interpreter reports its instruction count every
  * {@value #INSTRUCTION_OBSERVER_THRESHOLD} instructions; the factory adds the reports since {@link #resetInstructionCount()} and throws
  * {@link InstructionBudgetError} once they exceed the budget. The interpreter's instruction count depends only on the script, so the
- * budget runs out at the same point on every platform. A setup context ({@link #enterSetupContext()}) counts nothing.
+ * budget runs out at the same point on every platform. A setup context ({@link #enterSetupContext()}) counts nothing. Contexts created while a
+ * debugger is set report their script calls and lines to it.
  */
 final class ScriptContextFactory extends ContextFactory {
     /**
@@ -46,6 +49,7 @@ final class ScriptContextFactory extends ContextFactory {
     private final long instructionBudget;
 
     private long instructionCount;
+    private @Nullable Debugger debugger;
 
     /**
      * Creates a {@link ScriptContextFactory} instance.
@@ -95,6 +99,15 @@ final class ScriptContextFactory extends ContextFactory {
     }
 
     /**
+     * Sets the debugger of the contexts created from now on.
+     *
+     * @param debugger the debugger, or {@code null} for none
+     */
+    void setDebugger(@Nullable Debugger debugger) {
+        this.debugger = debugger;
+    }
+
+    /**
      * Starts a new call: the instruction count returns to {@code 0}.
      */
     void resetInstructionCount() {
@@ -112,6 +125,10 @@ final class ScriptContextFactory extends ContextFactory {
         context.setTimeZone(TimeZone.getTimeZone(TIME_ZONE));
         context.setMaximumInterpreterStackDepth(MAXIMUM_INTERPRETER_STACK_DEPTH);
         context.setInstructionObserverThreshold(INSTRUCTION_OBSERVER_THRESHOLD);
+
+        if (this.debugger != null) {
+            context.setDebugger(this.debugger, null);
+        }
     }
 
     @Override

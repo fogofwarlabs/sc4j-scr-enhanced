@@ -26,7 +26,7 @@ A patch of the [SC:R mod](https://github.com/fogofwarlabs/sc4j-scr) as its own S
 
 ### 1. Fast map download
 
-In a Beacon.Link room where every player runs SC:R Enhanced, the lobby map arrives through the SC4J engine's transfer, much faster than StarCraft's map transfer. Other rooms keep StarCraft's map transfer.
+In a Beacon.Link room where every player runs SC:R Enhanced, the lobby map arrives through the SC4J engine's transfer, faster than StarCraft's map transfer. Other rooms keep StarCraft's map transfer.
 
 ### 2. Large maps
 
@@ -84,7 +84,7 @@ Guide: [Enhanced Script](docs/script.md).
 | `src/mod` | the mod's own classes and resources |
 | `src/test` | tests; they read the built jars |
 
-The mod has its own settings, storage and logs. It shares the StarCraft: Remastered folder setting and the launcher art of the SC:R mod, and runs without `scr.jar`.
+The mod has its own settings, storage, logs and launcher art ([branding](docs/branding/README.md)). It shares the StarCraft: Remastered folder setting with the SC:R mod and runs without `scr.jar`.
 
 ## Clone and overlay
 

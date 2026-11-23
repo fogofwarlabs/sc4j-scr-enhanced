@@ -1,13 +1,11 @@
 package org.fogofwarlabs.sc4j.screnhanced.script.core;
 
 import org.fogofwarlabs.sc4j.base.exception.Exceptions;
-import org.fogofwarlabs.sc4j.scr.content.ScrOrderIds;
-import org.fogofwarlabs.sc4j.scr.content.ScrTechIds;
-import org.fogofwarlabs.sc4j.scr.content.ScrUnitIds;
-import org.fogofwarlabs.sc4j.scr.content.ScrUpgradeIds;
+import org.fogofwarlabs.sc4j.scr.content.*;
 import org.fogofwarlabs.sc4j.scr.data.type.ScrUnitTypeView;
 import org.fogofwarlabs.sc4j.scr.data.type.constant.UnitTypeFlags;
 import org.fogofwarlabs.sc4j.scr.game.ability.UnitSpells;
+import org.fogofwarlabs.sc4j.scr.game.combat.UnitDamage;
 import org.fogofwarlabs.sc4j.scr.game.order.OrderPool;
 import org.fogofwarlabs.sc4j.scr.game.order.ScrOrderSystem;
 import org.fogofwarlabs.sc4j.scr.game.order.UnitOrderEligibility;
@@ -59,7 +57,12 @@ import java.util.function.ToIntFunction;
  * (Create Unit; the new id or {@code -1}), {@code kill} and {@code remove} (Kill Unit and Remove Unit), {@code damage(id, amount, source,
  * sourcePlayer)} (the damage routine after armor and shields: the raw amount comes off the hit points and a unit whose hit points run out
  * dies, its death and kill credited to the attacking unit {@code source} and player {@code sourcePlayer}, each {@code -1} for none; a source
- * unit is revealed to the damaged unit's owner as an attacker's is; {@code false} for a subunit), {@code move(id, x, y)} (Move Unit),
+ * unit is revealed to the damaged unit's owner as an attacker's is; {@code false} for a subunit), {@code applyDamage(id, amount, source,
+ * sourcePlayer, weapon, damageType)} (the weapon damage routine of a full-damage hit ({@link UnitDamage#dealWeaponDamage(int, int, int, int,
+ * Unit, int, Unit, int, int)}): the damage decision, hallucination, acid spores, the defensive matrix, shields, armor and the size factor of
+ * the damage type, then the damage routine; the raw base amount, the attacking unit {@code source} ({@code -1} for none), the attacking
+ * player {@code sourcePlayer}, the weapon ({@code -1} for none) and the {@code weapons.dat} damage type ({@code -1} for the weapon's); the hit
+ * faces the source unit's heading, else the unit's own; {@code false} for a subunit), {@code move(id, x, y)} (Move Unit),
  * {@code give(id, player)} (Give Units to Player) and {@code issueOrder(id, order, target, x, y, queued)} (with {@code target} {@code -1} and
  * not queued the Order action to the position; queued or with a target unit the order system after the order requirement test, which appends
  * a queued order behind the queue of an order that takes one). A write that the routine refuses returns {@code false}.
@@ -118,6 +121,10 @@ final class ScriptUnitCore {
      * The largest value of a WORD field.
      */
     private static final int WORD_MAXIMUM = 0xFFFF;
+    /**
+     * The damage divisor of a full-damage hit.
+     */
+    private static final int FULL_DAMAGE_DIVISOR = 1;
 
     private final @NotNull ScriptGame scriptGame;
 
@@ -402,6 +409,34 @@ final class ScriptUnitCore {
             }
 
             this.getGame().getUnitDamage().dealUnitDamage(unit, amount, source, sourcePlayer, source != null, this.scriptGame.getInstructionLimit());
+
+            return true;
+        });
+        ScriptCoreUtils.defineFunction(global, namespace, "applyDamage", 6, (context, scope, thisObject, arguments) -> {
+            this.scriptGame.checkWritable();
+
+            Unit unit = this.readUnit(arguments, 0);
+            int amount = this.readAmount(arguments, 1);
+            Unit source = ScriptCoreUtils.readInteger(arguments, 2) == ScriptCoreUtils.NO_ID ? null : this.readUnit(arguments, 2);
+            int sourcePlayer = ScriptCoreUtils.requireId("player", ScriptCoreUtils.readInteger(arguments, 3), PlayerTable.PLAYER_SLOTS);
+            int weapon = ScriptCoreUtils.readInteger(arguments, 4) == ScriptCoreUtils.NO_ID ? ScriptCoreUtils.NO_ID
+                                                                                            : ScriptBulletCore.readWeapon(arguments, 4);
+            int damageType = ScriptCoreUtils.readInteger(arguments, 5);
+
+            if (damageType == ScriptCoreUtils.NO_ID && weapon != ScriptCoreUtils.NO_ID) {
+                damageType = this.getGame().requireGameData().getWeaponTypes().getDamageType(weapon);
+            } else {
+                ScriptCoreUtils.requireId("damage type", damageType, ScrDamageKinds.getTypes().size());
+            }
+
+            if ((this.getUnitTypes().getFlags(unit.getUnitId()) & UnitTypeFlags.SUBUNIT) != 0) {
+                return false;
+            }
+
+            int heading = source != null ? source.getHeading() : unit.getHeading();
+
+            this.getGame().getUnitDamage().dealWeaponDamage(weapon, damageType, amount, FULL_DAMAGE_DIVISOR, source, sourcePlayer, unit, heading,
+                                                            this.scriptGame.getInstructionLimit());
 
             return true;
         });

@@ -22,7 +22,7 @@
  * those of its kind. A unit is its id with the generation of its slot in the property named after it plus Generation; unit, player, type
  * and order ids are -1 for none.
  * <p>
- * UnitCreated, UnitCompleted: unit, unitType, owner. UnitDied: also killer, killerPlayer, weapon. UnitDamaged: also source, sourcePlayer,
+ * UnitCreated, UnitCompleted: unit, unitType, owner. UnitDied: also killer, killerPlayer, weapon, x, y. UnitDamaged: also source, sourcePlayer,
  * weapon, amount. OrderIssued: also order, target, targetX, targetY, buildType, queued. TargetAcquired: also target. UnitTrained: also
  * producer. ResearchCompleted: also tech. UpgradeCompleted: also upgrade, level. SpellCast: also tech, target, targetX, targetY.
  * OwnerChanged: also previousOwner. UnitLoaded, UnitUnloaded: also transport. BulletCreated, BulletHit: bullet and bulletGeneration
@@ -100,6 +100,10 @@ interface CoreEventRecord {
     readonly reason?: number;
     /** The raw result: 1 dropped, 2 defeat, 3 victory, 4 secured victory, 5 draw. */
     readonly result?: number;
+    /** The x position in map pixels the unit had when it died. */
+    readonly x?: number;
+    /** The y position in map pixels the unit had when it died. */
+    readonly y?: number;
 }
 
 /**
@@ -2012,7 +2016,7 @@ interface CoreUnit {
      * Deals damage as a hit does after armor and shields: the amount comes off the hit points, and a unit whose hit points run out dies. The
      * death and the kill count for the source: the unit event names the source unit as the killer and the source player as the killer's
      * player, the source unit's kill count grows against an enemy, and the source player's kill and score counters count the unit. A source
-     * unit is revealed to the damaged unit's owner as an attacker is. Shared code only.
+     * unit is revealed to the damaged unit's owner as an attacker is. Shields, armor and the damage decision do not apply. Shared code only.
      *
      * @param amount       the raw damage in 1/256 hit points, at least 0
      * @param source       the attacking unit, or -1 for none
@@ -2020,6 +2024,20 @@ interface CoreUnit {
      * @returns {@code false} for a subunit, which stays with its unit
      */
     damage(unit: number, amount: number, source: number, sourcePlayer: number): boolean;
+
+    /**
+     * Hits the unit through the weapon damage routine of a full-damage hit: the damage decision ({@link DecisionKind}), hallucination, acid
+     * spores, the defensive matrix, shields, armor and the size factor of the damage type, then the damage of {@link damage}. The shield
+     * overlay faces the source unit's heading, else the unit's own. Shared code only.
+     *
+     * @param amount       the raw base damage in 1/256 hit points, at least 0
+     * @param source       the attacking unit, or -1 for none
+     * @param sourcePlayer the attacking player slot, 0 to 11
+     * @param weapon       the weapons.dat entry the decision and the events name, or -1 for none
+     * @param damageType   the damage type, 0 to 4, or -1 for the weapon's
+     * @returns {@code false} for a subunit, which stays with its unit
+     */
+    applyDamage(unit: number, amount: number, source: number, sourcePlayer: number, weapon: number, damageType: number): boolean;
 
     /**
      * Removes the unit without a death, as Remove Unit does. Shared code only.
@@ -2733,6 +2751,14 @@ interface CoreSprite {
      * @returns the sprite, or -1 when the pools are full
      */
     createEffect(spriteType: number, x: number, y: number, owner: number, elevation: number): number;
+
+    /**
+     * Removes the sprite of a sprite effect as the game retires a sprite: its images first, then the sprite and its sprite effect. Shared code
+     * only.
+     *
+     * @returns {@code false} for a sprite of no sprite effect, such as that of a unit or a bullet
+     */
+    remove(sprite: number): boolean;
 }
 
 /**
@@ -3193,9 +3219,9 @@ interface CoreImageTypes extends CoreTypes {
 }
 
 /**
- * The GRPs, anims and images of the map's resources ({@code core.resources}). A resource name is relative to the resource folder with /
- * separators. getGrp, getAnim and getImage check a resource once and return its handle, the same for the same name; a missing or invalid
- * resource throws an Error.
+ * The GRPs, anims, images and sounds of the map's resources ({@code core.resources}). A resource name is relative to the resource folder
+ * with / separators. getGrp, getAnim, getImage and getSound check a resource once and return its handle, the same for the same name; a
+ * missing or invalid resource throws an Error.
  */
 interface CoreResources {
     /**
@@ -3223,6 +3249,13 @@ interface CoreResources {
      * @returns the resource handle
      */
     getImage(name: string): number;
+
+    /**
+     * Reads a sound: a RIFF WAVE of 8-bit, 16-bit or 24-bit PCM, mono or stereo, or an Ogg Vorbis file that decodes.
+     *
+     * @returns the resource handle
+     */
+    getSound(name: string): number;
 
     /**
      * Reads a resource as UTF-8 text, a leading byte order mark left out; bytes that are no UTF-8 throw an Error. The text is decoded once.
@@ -4109,6 +4142,16 @@ interface CoreSound {
      * @param y       the map y in pixels
      */
     playAt(soundId: number, x: number, y: number): void;
+
+    /**
+     * Plays a sound of the map's resources at a map position on the channels of Play WAV: at full volume on the screen, fading to silence 512
+     * pixels outside it. A sound played by local code plays with the sounds of the next frame start.
+     *
+     * @param sound a sound handle ({@link CoreResources.getSound}); another handle or -1 throws a RangeError
+     * @param x     the map x in pixels
+     * @param y     the map y in pixels
+     */
+    playResourceAt(sound: number, x: number, y: number): void;
 }
 
 /**
@@ -4165,7 +4208,7 @@ interface Core {
     readonly events: CoreEvents;
     /** The script commands the players send. */
     readonly command: CoreCommand;
-    /** The resources of the map script: GRP, anim and image files. */
+    /** The resources of the map script: GRP, anim, image and sound files. */
     readonly resources: CoreResources;
     /** The graphics replacements of the game's images. */
     readonly graphics: CoreGraphics;

@@ -1117,7 +1117,8 @@ interface Hooks {
     onRender?(screen: Screen): void;
 
     /**
-     * Decides the damage of a weapon hit; the game is read-only meanwhile.
+     * Decides the damage of a weapon hit, also of {@link Unit.applyDamage}; the game is read-only meanwhile. {@link Unit.damage} and
+     * {@link Unit.kill} do not come here.
      */
     onBeforeDamage?(decision: DamageDecision): void;
 
@@ -2705,7 +2706,8 @@ interface Unit {
 
     /**
      * Kills the unit. Without a source it dies as Kill Unit does, credited to nobody; with a source it dies through the damage routine (see
-     * {@link Unit.damage}), so that the death event names the killer and the kill counts for the source. Shared code only.
+     * {@link Unit.damage}), so that the death event names the killer and the kill counts for the source. It does not run
+     * {@link Hooks.onBeforeDamage}. Shared code only.
      *
      * @param source the killer: a unit (its owner is the killing player) or a player; null or left out for none
      * @returns false when the routine refuses, as for a subunit
@@ -2716,13 +2718,28 @@ interface Unit {
      * Takes hit points off the unit as a hit does after armor and shields; a unit whose hit points run out dies. With a source the death event
      * names the killer ({@link UnitDiedEvent.getKiller}, {@link UnitDiedEvent.getKillerPlayer}), the source unit's kill count grows against an
      * enemy, the source player's kill and score counters count the unit, and a source unit is revealed to this unit's owner as an attacker is.
-     * Shared code only.
+     * Shields, armor, the damage type and {@link Hooks.onBeforeDamage} do not apply: the hit points drop by exactly hp. {@link Unit.applyDamage}
+     * hits as a weapon does. Shared code only.
      *
      * @param hp     the hit points to take off, at least 0
      * @param source the attacker: a unit (its owner is the attacking player) or a player; null or left out for none
      * @returns false for a subunit, which stays with its unit
      */
     damage(hp: number, source?: Unit | Player | null): boolean;
+
+    /**
+     * Hits the unit as a weapon hit does, through the game's weapon damage routine: {@link Hooks.onBeforeDamage} decides the amount first,
+     * then a hallucination takes double, acid spores add theirs, the defensive matrix absorbs, shields take what they hold, armor with its
+     * upgrades comes off (not for {@link DamageTypeTable.IgnoreArmor}), the damage type scales against the unit's size, and the rest comes off
+     * the hit points, at least half a point. A unit whose hit points run out dies; the death and the kill count for the source as with
+     * {@link Unit.damage}. The shield overlay faces the source unit's heading. Nothing happens to an invincible unit. Shared code only.
+     *
+     * @param amount  the base damage in hit points, at least 0; the weapon's upgrade does not add to it
+     * @param source  the attacker: a unit (its owner is the attacking player) or a player
+     * @param options the weapon and the damage type
+     * @returns false for a subunit, which stays with its unit
+     */
+    applyDamage(amount: number, source: Unit | Player, options?: DamageOptions): boolean;
 
     /**
      * Removes the unit as Remove Unit does. Shared code only.
@@ -3969,6 +3986,20 @@ interface Game {
 }
 
 /**
+ * The options of {@link Unit.applyDamage}.
+ */
+interface DamageOptions {
+    /**
+     * The weapon of the hit, which the damage decision, the damage event and the death event name; by default none.
+     */
+    weapon?: WeaponType | null;
+    /**
+     * The damage type, by default the weapon's, without a weapon {@link DamageTypeTable.Normal}.
+     */
+    damageType?: DamageType | null;
+}
+
+/**
  * The options of {@link Game.createEffect}.
  */
 interface EffectOptions {
@@ -4032,6 +4063,14 @@ interface Sprite {
      * @returns true when the player sees the sprite
      */
     isVisibleTo(player: Player): boolean;
+
+    /**
+     * Removes the sprite of an effect, such as a looping one of {@link Game.createEffect}, as the game ends a sprite: its images first, then
+     * the sprite. Shared code only.
+     *
+     * @returns false for a sprite of no effect, such as that of a unit or a bullet
+     */
+    remove(): boolean;
 }
 
 /**
@@ -4657,6 +4696,12 @@ interface Image extends Resource {
 }
 
 /**
+ * A sound file of the resource folder ({@link Resources.getSound}) to play at a position ({@link DisplaySound.playAt}).
+ */
+interface Sound extends Resource {
+}
+
+/**
  * The files of the map's resource folder ({@link GameMap.resources}). A file is read once; later calls with the same name return the same
  * object. A missing file or one that is not valid for the kind throws an Error. Reading works in shared and local code.
  */
@@ -4690,6 +4735,14 @@ interface Resources {
      * @returns the picture
      */
     getImage(name: string): Image;
+
+    /**
+     * Reads a sound: a RIFF WAVE of 8-bit, 16-bit or 24-bit PCM, mono or stereo, or an Ogg Vorbis file.
+     *
+     * @param name the path relative to resources/
+     * @returns the sound
+     */
+    getSound(name: string): Sound;
 
     /**
      * Reads a file as UTF-8 text; a leading byte order mark is left out. A file that is no UTF-8 throws an Error.
@@ -5880,12 +5933,13 @@ interface Messages {
 interface DisplaySound {
     /**
      * Plays a sound at a position, louder the nearer it is to the screen, whether the players see the position or not. A sound of local code
-     * plays with the sounds of the next frame start.
+     * plays with the sounds of the next frame start. A sound of the resource folder plays on the channels of Play WAV, at full volume on the
+     * screen, fading to silence 512 pixels outside it.
      *
-     * @param soundId  the sfxdata.dat id, 0 to 1143
+     * @param sound    the sfxdata.dat id, 0 to 1143, or a sound of the resource folder ({@link Resources.getSound})
      * @param position the position in map pixels
      */
-    playAt(soundId: number, position: Position): void;
+    playAt(sound: number | Sound, position: Position): void;
 }
 
 /**
@@ -6408,6 +6462,11 @@ interface UnitDiedEvent extends UnitEvent {
      * @returns the weapon that killed it, or null when unknown
      */
     getWeapon(): WeaponType | null;
+
+    /**
+     * @returns the unit's position when it died, in map pixels
+     */
+    getPosition(): Position;
 }
 
 /**

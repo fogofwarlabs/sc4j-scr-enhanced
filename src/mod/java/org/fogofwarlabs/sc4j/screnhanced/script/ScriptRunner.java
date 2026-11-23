@@ -2,6 +2,7 @@ package org.fogofwarlabs.sc4j.screnhanced.script;
 
 import org.fogofwarlabs.sc4j.base.exception.Exceptions;
 import org.fogofwarlabs.sc4j.scr.client.configuration.InstallLayout;
+import org.fogofwarlabs.sc4j.screnhanced.script.inspector.ScriptInspector;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -22,7 +23,8 @@ import java.util.stream.Stream;
  *     --install <install> --mod <install>/mods/scr-enhanced.jar -- --ums <packed map>
  *}
  * A melee run ends the command line with {@code --melee <packed map> --computer random} instead: one computer player of a random race against
- * the human of the client's default race, name and slot. The runtime takes the settings, storage and log folders of the mod from the install.
+ * the human of the client's default race, name and slot. A run with a DevTools port puts the system property
+ * {@code -D}{@value ScriptInspector#PORT_PROPERTY}{@code =<port>} before the launch file's lines, which starts the client's DevTools server. The runtime takes the settings, storage and log folders of the mod from the install.
  * The packed map is {@code <install>/userdata/mods/scr-enhanced/script-run/<map file name>}, in the mod's storage outside the map folder the
  * client lists; the source map stays as it is.
  * <p>
@@ -42,6 +44,10 @@ public final class ScriptRunner {
      * The system property that names the SC4J install when the command line does not.
      */
     public static final @NotNull String INSTALL_PROPERTY = "sc4j.install";
+    /**
+     * The DevTools port of a run without the DevTools console.
+     */
+    public static final int NO_INSPECT_PORT = -1;
 
     private static final @NotNull String RUNTIME_FOLDER = "runtime";
     private static final @NotNull String BINARY_FOLDER = "bin";
@@ -62,6 +68,7 @@ public final class ScriptRunner {
     private static final @NotNull String MELEE_OPTION = "--melee";
     private static final @NotNull String COMPUTER_OPTION = "--computer";
     private static final @NotNull String MELEE_COMPUTER_RACES = "random";
+    private static final @NotNull String SYSTEM_PROPERTY_PREFIX = "-D";
     private static final @NotNull String TEMPORARY_SUFFIX = ".tmp";
     private static final @NotNull String RESOURCE_PREFIX = ScriptPackage.RESOURCE_FOLDER + "/";
 
@@ -142,6 +149,7 @@ public final class ScriptRunner {
     private final @NotNull Path map;
     private final @NotNull Path scriptFolder;
     private final boolean melee;
+    private final int inspectPort;
     private final @NotNull ProcessStarter starter;
 
     private final @NotNull Path packedMap;
@@ -154,13 +162,16 @@ public final class ScriptRunner {
      * @param map          the map to pack the scripts into
      * @param scriptFolder the script folder
      * @param melee        whether the packed map starts as a melee game instead of a Use Map Settings game
+     * @param inspectPort  the port of the client's DevTools console, or {@link #NO_INSPECT_PORT} for none
      * @param starter      starts the runtime process
      */
-    public ScriptRunner(@NotNull Path install, @NotNull Path map, @NotNull Path scriptFolder, boolean melee, @NotNull ProcessStarter starter) {
+    public ScriptRunner(@NotNull Path install, @NotNull Path map, @NotNull Path scriptFolder, boolean melee, int inspectPort,
+                        @NotNull ProcessStarter starter) {
         this.install      = install.toAbsolutePath().normalize();
         this.map          = map.toAbsolutePath().normalize();
         this.scriptFolder = scriptFolder.toAbsolutePath().normalize();
         this.melee        = melee;
+        this.inspectPort  = inspectPort;
         this.starter      = starter;
 
         Path mapName = this.map.getFileName();
@@ -235,7 +246,8 @@ public final class ScriptRunner {
     }
 
     /**
-     * Creates the command line that starts SC:R Enhanced on the packed map, as a melee or a Use Map Settings game.
+     * Creates the command line that starts SC:R Enhanced on the packed map, as a melee or a Use Map Settings game, with the DevTools console
+     * when the run has a port for it.
      *
      * @param javaProgram the Java program
      * @return the command line, one argument per element
@@ -257,6 +269,10 @@ public final class ScriptRunner {
         List<String> command = new ArrayList<>();
 
         command.add(javaProgram.toString());
+
+        if (this.inspectPort != NO_INSPECT_PORT) {
+            command.add(SYSTEM_PROPERTY_PREFIX + ScriptInspector.PORT_PROPERTY + "=" + this.inspectPort);
+        }
 
         for (String line : Files.readAllLines(launchFile, StandardCharsets.UTF_8)) {
             if (!line.isBlank()) {

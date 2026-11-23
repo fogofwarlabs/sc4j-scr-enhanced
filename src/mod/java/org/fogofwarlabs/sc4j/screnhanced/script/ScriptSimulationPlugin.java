@@ -12,6 +12,7 @@ import org.fogofwarlabs.sc4j.screnhanced.graphics.ConsoleSettings;
 import org.fogofwarlabs.sc4j.screnhanced.graphics.ConsoleSettingsSource;
 import org.fogofwarlabs.sc4j.screnhanced.graphics.ImageReplacementSource;
 import org.fogofwarlabs.sc4j.screnhanced.graphics.ImageReplacements;
+import org.fogofwarlabs.sc4j.screnhanced.script.inspector.ScriptInspector;
 import org.fogofwarlabs.sc4j.screnhanced.script.runtime.ScriptRuntime;
 import org.jetbrains.annotations.NotNull;
 
@@ -19,7 +20,8 @@ import org.jetbrains.annotations.NotNull;
  * Runs the script package of one game's scenario in the game's simulation.
  * <p>
  * The plugin creates the {@link ScriptRuntime} with the game API, the map's resources and a seed from the game's setup seed, the same on every
- * peer and in every replay, and starts it at the first frame start.
+ * peer and in every replay, and starts it at the first frame start. The runtime's log output also goes to the client's DevTools console
+ * ({@link ScriptInspector}).
  * <p>
  * The events of the game go into the runtime's queue with their frame, the events from before the first frame (the units the map and the
  * game start create) as well, and the runtime delivers them at the next frame start, before the triggers. A frame start whose frame number
@@ -49,7 +51,8 @@ public final class ScriptSimulationPlugin implements ScrSimulationPlugin, ImageR
      */
     public ScriptSimulationPlugin(@NotNull Game game, @NotNull ScriptPackage scriptPackage, @NotNull ScriptResources resources) {
         this.game    = game;
-        this.runtime = ScriptRuntime.create(scriptPackage, game, resources, Integer.toUnsignedLong(game.getSetup().getSeed()));
+        this.runtime = ScriptRuntime.create(scriptPackage, game, resources, Integer.toUnsignedLong(game.getSetup().getSeed()),
+                                            ScriptRuntime.INSTRUCTION_BUDGET, ScriptInspector.getShared().createLogOutput(game));
 
         this.started   = false;
         this.lastFrame = 0;
@@ -85,8 +88,9 @@ public final class ScriptSimulationPlugin implements ScrSimulationPlugin, ImageR
      * <p>
      * Every call forgets the image replacements of units whose slot was freed; the first call starts the script; the first call, every call
      * whose frame number advanced and every call while Pause Game holds the game, when the triggers run without a frame, run the script's frame;
-     * every call then hands the waiting script commands to the game's mod command submitter, which drops them in a replay or for an observer,
-     * and plays the sounds the script's local code played since the previous call.
+     * every call then runs the console code of the client's DevTools console ({@link ScriptInspector#onFrameStarted}), hands the waiting script
+     * commands to the game's mod command submitter, which drops them in a replay or for an observer, and plays the sounds the script's local
+     * code played since the previous call.
      */
     @Override
     public void onFrameStarted() {
@@ -109,6 +113,7 @@ public final class ScriptSimulationPlugin implements ScrSimulationPlugin, ImageR
             this.runtime.runFrame(frame);
         }
 
+        ScriptInspector.getShared().onFrameStarted(this.game, this.runtime);
         this.runtime.submitCommands(this.game.getInterfaceLink().getModCommandSubmitter());
         this.runtime.playLocalSounds();
     }

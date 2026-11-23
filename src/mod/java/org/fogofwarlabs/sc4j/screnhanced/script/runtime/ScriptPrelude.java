@@ -19,8 +19,9 @@ import java.util.List;
  * tables of the type objects ({@link ScriptDatTables#createPreludeTables}). A file reaches the game through {@code core} only.
  * <p>
  * The last file's {@code createEntryPoints(host)} makes the entry points over the runtime's host: {@code frame(frame)},
- * {@code localFrame(frame)}, {@code render()}, {@code decide(kind, record)} and {@code localInput(record)}, which return nothing but the
- * consumption of a local input. Their arguments are numbers and records.
+ * {@code localFrame(frame)}, {@code render()}, {@code decide(kind, record)}, {@code localInput(record)} and {@code setLocal(local)} (whether
+ * the console code that runs next is local code), which return nothing but the consumption of a local input. Their arguments are numbers,
+ * booleans and records.
  */
 final class ScriptPrelude {
     /**
@@ -43,6 +44,7 @@ final class ScriptPrelude {
     private static final @NotNull String RENDER_NAME = "render";
     private static final @NotNull String DECIDE_NAME = "decide";
     private static final @NotNull String LOCAL_INPUT_NAME = "localInput";
+    private static final @NotNull String SET_LOCAL_NAME = "setLocal";
     private static final int GLOBAL_ATTRIBUTES = ScriptableObject.READONLY | ScriptableObject.DONTENUM | ScriptableObject.PERMANENT;
     private static final int NAME_ATTRIBUTES = ScriptableObject.READONLY | ScriptableObject.PERMANENT;
 
@@ -147,6 +149,7 @@ final class ScriptPrelude {
     private final @NotNull Function render;
     private final @NotNull Function decide;
     private final @NotNull Function localInput;
+    private final @NotNull Function setLocal;
 
     /**
      * Creates a {@link ScriptPrelude} instance over the prelude's entry points.
@@ -164,6 +167,7 @@ final class ScriptPrelude {
         this.render     = requireEntryPoint(entryPoints, RENDER_NAME);
         this.decide     = requireEntryPoint(entryPoints, DECIDE_NAME);
         this.localInput = requireEntryPoint(entryPoints, LOCAL_INPUT_NAME);
+        this.setLocal   = requireEntryPoint(entryPoints, SET_LOCAL_NAME);
     }
 
     /**
@@ -215,5 +219,16 @@ final class ScriptPrelude {
      */
     boolean localInput(@NotNull Context context, @NotNull Scriptable record) {
         return Boolean.TRUE.equals(this.localInput.call(context, this.global, this.entryPoints, new Object[]{record}));
+    }
+
+    /**
+     * Calls {@code setLocal(local)}: whether the console code that runs next is local code, for the functions of the prelude that only shared
+     * code may call.
+     *
+     * @param context the current context
+     * @param local   {@code true} for local code
+     */
+    void setLocal(@NotNull Context context, boolean local) {
+        this.setLocal.call(context, this.global, this.entryPoints, new Object[]{local});
     }
 }

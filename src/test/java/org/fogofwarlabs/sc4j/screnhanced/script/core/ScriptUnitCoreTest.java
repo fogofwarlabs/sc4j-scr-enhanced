@@ -13,8 +13,8 @@ import java.util.List;
 
 /**
  * Tests {@code core.unit} and the {@code Unit} objects of the prelude in a live melee game: reading the start units, shown and raw hit
- * points, creating and killing through the trigger routines, one object per unit with one {@code timers} object, {@code exists()} after
- * death, and the doodad state, resource amount and hangar routines.
+ * points, creating and killing through the trigger routines, damage with and without the weapon damage routine, one object per unit with one
+ * {@code timers} object, {@code exists()} after death, and the doodad state, resource amount and hangar routines.
  */
 @RequiresInstallation
 @ExtendWith(GameResourcesExtension.class)
@@ -176,6 +176,54 @@ final class ScriptUnitCoreTest {
 
         Assertions.assertEquals(List.of("true 25 true false 1", "true 2 true 2 3", "false false"), scenario.getInfoMessages(),
                                 scenario.getLines()::toString);
+    }
+
+    @Test
+    void apply_damage_takes_shields_armor_and_the_damage_type_as_a_weapon_hit(@NotNull InstallationTestResources resources) throws IOException {
+        LiveScriptGameScenario scenario = LiveScriptGameScenario.startMelee(resources.getGameData(), """
+                                                                                                     var marine;
+                                                                                                     function attempt(call) {
+                                                                                                         try {
+                                                                                                             return call();
+                                                                                                         } catch (error) {
+                                                                                                             return error.name;
+                                                                                                         }
+                                                                                                     }
+                                                                                                     function onStart() {
+                                                                                                         var human = game.players.getHumans()[0];
+                                                                                                         var other = game.units.findOne({type: UnitType.ZergHatchery}).getOwner();
+                                                                                                         var position = game.units.findOne({type: UnitType.TerranCommandCenter, owner: human}).getPosition();
+                                                                                                         marine = game.units.create(UnitType.TerranMarine, human, position);
+                                                                                                         var zealot = game.units.create(UnitType.ProtossZealot, other, position);
+                                                                                                         var ultralisk = game.units.create(UnitType.ZergUltralisk, other, position);
+                                                                                                         var zergling = game.units.create(UnitType.ZergZergling, other, position);
+                                                                                                         log.info(zealot.applyDamage(20, marine), zealot.getShields(), zealot.getHp(),
+                                                                                                                  marine.applyDamage(10, other, {damageType: DamageType.Explosive}), marine.getHp());
+                                                                                                         log.info(ultralisk.applyDamage(10, marine, {damageType: DamageType.Concussive}), ultralisk.getHp(),
+                                                                                                                  ultralisk.applyDamage(10, marine, {damageType: DamageType.IgnoreArmor}), ultralisk.getHp());
+                                                                                                         log.info(zergling.applyDamage(6, marine, {weapon: WeaponType.GaussRifle}), zergling.getHp(),
+                                                                                                                  zergling.applyDamage(100, marine), zergling.exists(), marine.getKillCount());
+                                                                                                         game.units.create(UnitType.TerranSiegeTankTankMode, human, position);
+                                                                                                         var subunit = game.units.findOne({type: UnitType.TerranSiegeTankTankModeTurret, owner: human});
+                                                                                                         log.info(subunit.applyDamage(1, human), attempt(function () { return marine.applyDamage(1); }),
+                                                                                                                  attempt(function () { return marine.applyDamage(1, human, {damageType: 3}); }),
+                                                                                                                  attempt(function () { return core.unit.applyDamage(marine.getId(), 256, -1, 12, -1, 3); }),
+                                                                                                                  attempt(function () { return core.unit.applyDamage(marine.getId(), 256, -1, 0, -1, -1); }),
+                                                                                                                  attempt(function () { return core.unit.applyDamage(marine.getId(), 256, -1, 0, -1, 5); }),
+                                                                                                                  attempt(function () { return core.unit.applyDamage(marine.getId(), -1, -1, 0, -1, 3); }), marine.getHp());
+                                                                                                     }
+                                                                                                     function onLocalFrame() {
+                                                                                                         log.info('local ' + attempt(function () { return marine.applyDamage(1, marine); }));
+                                                                                                     }
+                                                                                                     """);
+
+        scenario.runLocalFrame();
+
+        Assertions.assertEquals(List.of("true 40 100 true 35",
+                                        "true 397.75 true 387.75",
+                                        "true 29 true false 1",
+                                        "false TypeError TypeError RangeError RangeError RangeError RangeError 35",
+                                        "local TypeError"), scenario.getInfoMessages(), scenario.getLines()::toString);
     }
 
     @Test

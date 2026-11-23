@@ -1,6 +1,8 @@
 package org.fogofwarlabs.sc4j.screnhanced.script.core;
 
 import org.fogofwarlabs.sc4j.scr.game.extension.simulation.SimulationEvent;
+import org.fogofwarlabs.sc4j.scr.game.extension.simulation.UnitDiedEvent;
+import org.fogofwarlabs.sc4j.scr.game.unit.Unit;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.mozilla.javascript.Context;
@@ -16,23 +18,28 @@ import java.util.List;
  * The simulation events wait from the moment they happen ({@link #queue}); each frame start ({@link #startFrame()}) makes the waiting events
  * the frame's events, in the order they happened. {@code getFrameEvents()} returns a new array of the records of the frame's events, read-only
  * plain objects of numbers and booleans: the {@code kind} (the ordinal of {@link ScriptEventKind}), the {@code frame} the event happened in
- * and the event's values ({@link ScriptSimulationUtils}). Reading does not take the events: every call of a frame returns the same records,
+ * and the event's values ({@link ScriptSimulationUtils}); a death also holds the position the unit had when the event was queued, since the
+ * unit is gone by the frame start. Reading does not take the events: every call of a frame returns the same records,
  * and the events that happen meanwhile wait for the next frame start. It works in shared code only. {@code getKindCount()} and
  * {@code getKindName(kind)} name the kinds.
  */
 final class ScriptEventCore {
     /**
-     * One waiting event, its kind and the frame it happened in.
+     * One waiting event, its kind, the frame it happened in and the position of its unit when it was queued.
      */
     private static final class QueuedEvent {
         private final @NotNull ScriptEventKind kind;
         private final @NotNull SimulationEvent event;
         private final int frame;
+        private final int positionX;
+        private final int positionY;
 
-        private QueuedEvent(@NotNull ScriptEventKind kind, @NotNull SimulationEvent event, int frame) {
-            this.kind  = kind;
-            this.event = event;
-            this.frame = frame;
+        private QueuedEvent(@NotNull ScriptEventKind kind, @NotNull SimulationEvent event, int frame, int positionX, int positionY) {
+            this.kind      = kind;
+            this.event     = event;
+            this.frame     = frame;
+            this.positionX = positionX;
+            this.positionY = positionY;
         }
     }
 
@@ -57,7 +64,7 @@ final class ScriptEventCore {
     }
 
     /**
-     * Adds an event to the waiting events; an event of no kind is left out.
+     * Adds an event to the waiting events with the position of a dying unit; an event of no kind is left out.
      *
      * @param event the event, whose values were captured when it happened
      * @param frame the frame it happened in
@@ -65,9 +72,13 @@ final class ScriptEventCore {
     void queue(@NotNull SimulationEvent event, int frame) {
         ScriptEventKind kind = ScriptEventKind.findByEvent(event);
 
-        if (kind != null) {
-            this.waiting.add(new QueuedEvent(kind, event, frame));
+        if (kind == null) {
+            return;
         }
+
+        Unit unit = event instanceof UnitDiedEvent died ? died.getUnit().getUnit() : null;
+
+        this.waiting.add(new QueuedEvent(kind, event, frame, unit == null ? 0 : unit.getPositionX(), unit == null ? 0 : unit.getPositionY()));
     }
 
     /**
@@ -130,7 +141,7 @@ final class ScriptEventCore {
         for (int index = 0; index < frameRecords.length; index++) {
             QueuedEvent queued = this.frameEvents.get(index);
             ScriptableObject record = ScriptSimulationUtils.createEventRecord(context, global, this.scriptGame.getUnitPool(), queued.kind,
-                                                                              queued.event, queued.frame);
+                                                                              queued.event, queued.frame, queued.positionX, queued.positionY);
 
             frameRecords[index] = ScriptCoreUtils.freeze(record);
         }

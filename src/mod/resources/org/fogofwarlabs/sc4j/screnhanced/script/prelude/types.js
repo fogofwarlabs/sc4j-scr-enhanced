@@ -415,6 +415,7 @@
             animationPrototype: animationPrototype,
             spriteTypePrototype: spriteTypePrototype,
             weaponTypePrototype: weaponTypePrototype,
+            damageTypePrototype: damageTypePrototype,
             unitTypePrototype: unitTypePrototype,
             imageTypePrototype: imageTypePrototype,
             upgradeTypePrototype: upgradeTypePrototype,

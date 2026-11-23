@@ -1,6 +1,7 @@
 package org.fogofwarlabs.sc4j.screnhanced.script.core;
 
 import org.fogofwarlabs.sc4j.base.exception.Exceptions;
+import org.fogofwarlabs.sc4j.engine.client.audio.WaveData;
 import org.fogofwarlabs.sc4j.engine.resource.graphics.Picture;
 import org.fogofwarlabs.sc4j.scr.content.ScrImages;
 import org.fogofwarlabs.sc4j.scr.game.sprite.SpriteImage;
@@ -27,13 +28,16 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Defines {@code core.resources} and {@code core.graphics}: the GRPs, anims and images of the map's resources, and the graphics they replace.
+ * Defines {@code core.resources} and {@code core.graphics}: the GRPs, anims, images and sounds of the map's resources, and the graphics they
+ * replace.
  * <p>
- * {@code core.resources}: {@code has(name)}, {@code getGrp(name)}, {@code getAnim(name)} and {@code getImage(name)}, and
+ * {@code core.resources}: {@code has(name)}, {@code getGrp(name)}, {@code getAnim(name)}, {@code getImage(name)} and {@code getSound(name)}, and
  * {@code getImageWidth(id)} and {@code getImageHeight(id)} (the pixel size of an image handle). A resource name is relative to the resource folder
- * with {@code /} separators. {@code getGrp}, {@code getAnim} and {@code getImage} return the id of a resource handle, the same id for the same
- * name, after checking the resource once: a GRP header with a readable frame table whose frames decode, a single-entry anim of asset scale
- * {@code 4} (HD) or {@code 2} (HD2) with a canvas and a {@code diffuse} layer, or a PNG or DDS picture that decodes ({@link PictureFileUtils}).
+ * with {@code /} separators. {@code getGrp}, {@code getAnim}, {@code getImage} and {@code getSound} return the id of a resource handle, the same
+ * id for the same name, after checking the resource once: a GRP header with a readable frame table whose frames decode, a single-entry anim of
+ * asset scale {@code 4} (HD) or {@code 2} (HD2) with a canvas and a {@code diffuse} layer, a PNG or DDS picture that decodes
+ * ({@link PictureFileUtils}), or a sound file that decodes ({@link WaveData#decode}: a RIFF WAVE of 8-bit, 16-bit or 24-bit PCM, mono or stereo,
+ * or an Ogg Vorbis file), which {@code core.sound.playResourceAt} plays ({@link ScriptSoundCore}).
  * A missing or invalid resource throws an {@code Error}. {@code readText(name)} returns any resource as text: its bytes decoded as UTF-8, a
  * leading byte order mark left out; bytes that are no UTF-8 throw an {@code Error}. The resources are read from the map's script trailer,
  * inflated and checked, when they are first asked for; an image is decoded once and drawn from the same picture afterwards, a text decoded once.
@@ -108,6 +112,7 @@ final class ScriptGraphicsCore {
     private final @NotNull Map<String, Integer> grpIds;
     private final @NotNull Map<String, Integer> animIds;
     private final @NotNull Map<String, Integer> imageIds;
+    private final @NotNull Map<String, Integer> soundIds;
     /**
      * The decoded text resources by name.
      */
@@ -132,6 +137,7 @@ final class ScriptGraphicsCore {
         this.grpIds   = new HashMap<>();
         this.animIds  = new HashMap<>();
         this.imageIds = new HashMap<>();
+        this.soundIds = new HashMap<>();
         this.texts    = new HashMap<>();
     }
 
@@ -162,6 +168,11 @@ final class ScriptGraphicsCore {
 
             return (double) this.findHandle(this.imageIds, name, "image", () -> PictureFileUtils.read(this.resources.read(this.requireEntry(name)),
                                                                                                       name));
+        });
+        ScriptCoreUtils.defineFunction(global, namespace, "getSound", 1, (context, scope, thisObject, arguments) -> {
+            String name = ScriptCoreUtils.readString(arguments, 0);
+
+            return (double) this.findHandle(this.soundIds, name, "sound", () -> this.readSound(name));
         });
         ScriptCoreUtils.defineFunction(global, namespace, "readText", 1, (context, scope, thisObject, arguments) -> {
             String name = ScriptCoreUtils.readString(arguments, 0);
@@ -227,6 +238,24 @@ final class ScriptGraphicsCore {
      */
     @Nullable Picture readOptionalPicture(@NotNull Object @NotNull [] arguments, int index) {
         return this.readHandle(arguments, index, Picture.class, "image");
+    }
+
+    /**
+     * Reads a sound handle argument ({@code core.resources.getSound}).
+     *
+     * @param arguments the call arguments
+     * @param index     the argument index
+     * @return the sound file of the handle
+     * @throws EcmaError if the argument is not an integer or names no sound handle
+     */
+    byte @NotNull [] readSoundFile(@NotNull Object @NotNull [] arguments, int index) {
+        byte[] file = this.readHandle(arguments, index, byte[].class, "sound");
+
+        if (file == null) {
+            throw ScriptRuntime.rangeError("A sound handle is needed, not -1.");
+        }
+
+        return file;
     }
 
     /**
@@ -392,6 +421,21 @@ final class ScriptGraphicsCore {
         byte[] content = this.resources.read(this.requireEntry(name));
 
         return this.getReplacements().readAnim(content, 0, content.length, name);
+    }
+
+    /**
+     * Reads a sound file and checks that it decodes.
+     *
+     * @param name the resource name
+     * @return the sound file
+     * @throws IOException if the file is no sound file that decodes
+     */
+    private byte @NotNull [] readSound(@NotNull String name) throws IOException {
+        byte[] content = this.resources.read(this.requireEntry(name));
+
+        WaveData.decode(content);
+
+        return content;
     }
 
     /**

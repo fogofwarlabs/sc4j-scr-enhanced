@@ -128,7 +128,7 @@ final class ScriptRunnerTest {
 
         ScriptMapScenario.writeFolder(scriptFolder, SCRIPT_FOLDER);
 
-        ScriptRunner runner = new ScriptRunner(install, map, scriptFolder, false, new RecordingStarter(0));
+        ScriptRunner runner = new ScriptRunner(install, map, scriptFolder, false, ScriptRunner.NO_INSPECT_PORT, new RecordingStarter(0));
         ScriptPackage packed = runner.pack();
         ScriptPackage read = readPackedPackage(runner.getPackedMap());
 
@@ -148,7 +148,7 @@ final class ScriptRunnerTest {
 
         ScriptMapScenario.writeFolder(scriptFolder, SCRIPT_FOLDER);
 
-        ScriptRunner runner = new ScriptRunner(install, map, scriptFolder, false, starter);
+        ScriptRunner runner = new ScriptRunner(install, map, scriptFolder, false, ScriptRunner.NO_INSPECT_PORT, starter);
 
         runner.pack();
         runner.start(java);
@@ -171,7 +171,7 @@ final class ScriptRunnerTest {
 
         ScriptMapScenario.writeFolder(scriptFolder, SCRIPT_FOLDER);
 
-        ScriptRunner runner = new ScriptRunner(install, writeMap(folder), scriptFolder, true, starter);
+        ScriptRunner runner = new ScriptRunner(install, writeMap(folder), scriptFolder, true, ScriptRunner.NO_INSPECT_PORT, starter);
 
         runner.pack();
         runner.start(Path.of("java"));
@@ -184,9 +184,20 @@ final class ScriptRunnerTest {
     }
 
     @Test
+    void create_command_should_switch_the_devtools_console_on_with_a_port(@TempDir @NotNull Path folder) throws IOException {
+        Path install = writeInstall(folder);
+        ScriptRunner runner = new ScriptRunner(install, writeMap(folder), folder.resolve("script"), false, 9340, new RecordingStarter(0));
+        List<String> command = runner.createCommand(Path.of("java"));
+
+        Assertions.assertEquals(List.of("java", "-Dsc4j.scr-enhanced.inspect=9340"), command.subList(0, 2));
+        Assertions.assertEquals(List.of("--ums", runner.getPackedMap().toString()), command.subList(command.size() - 2, command.size()));
+    }
+
+    @Test
     void create_command_should_fail_without_runtime_or_mod(@TempDir @NotNull Path folder) throws IOException {
         Path install = writeInstall(folder);
-        ScriptRunner runner = new ScriptRunner(install, writeMap(folder), folder.resolve("script"), false, new RecordingStarter(0));
+        ScriptRunner runner = new ScriptRunner(install, writeMap(folder), folder.resolve("script"), false, ScriptRunner.NO_INSPECT_PORT,
+                                               new RecordingStarter(0));
 
         Files.delete(install.resolve("mods/scr-enhanced.jar"));
         Assertions.assertThrows(IOException.class, () -> runner.createCommand(Path.of("java")));
@@ -204,7 +215,8 @@ final class ScriptRunnerTest {
         ScriptMapScenario.writeFolder(scriptFolder, SCRIPT_FOLDER);
         Files.setLastModifiedTime(main, FileTime.fromMillis(MODIFIED_TIME));
 
-        ScriptRunner runner = new ScriptRunner(install, writeMap(folder), scriptFolder, false, new RecordingStarter(0));
+        ScriptRunner runner = new ScriptRunner(install, writeMap(folder), scriptFolder, false, ScriptRunner.NO_INSPECT_PORT,
+                                               new RecordingStarter(0));
 
         runner.pack();
 

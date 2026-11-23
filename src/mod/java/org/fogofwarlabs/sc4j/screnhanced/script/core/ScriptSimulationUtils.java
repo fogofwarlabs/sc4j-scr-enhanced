@@ -28,16 +28,19 @@ final class ScriptSimulationUtils {
     /**
      * Creates the record of an event.
      *
-     * @param context the current context
-     * @param global  the global scope
-     * @param pool    the unit pool
-     * @param kind    the kind of the event
-     * @param event   the event
-     * @param frame   the frame the event happened in
+     * @param context   the current context
+     * @param global    the global scope
+     * @param pool      the unit pool
+     * @param kind      the kind of the event
+     * @param event     the event
+     * @param frame     the frame the event happened in
+     * @param positionX the x position in map pixels of the unit of a death when the event was queued
+     * @param positionY the y position in map pixels of the unit of a death when the event was queued
      * @return the record
      */
     static @NotNull ScriptableObject createEventRecord(@NotNull Context context, @NotNull Scriptable global, @NotNull UnitPool pool,
-                                                       @NotNull ScriptEventKind kind, @NotNull SimulationEvent event, int frame) {
+                                                       @NotNull ScriptEventKind kind, @NotNull SimulationEvent event, int frame,
+                                                       int positionX, int positionY) {
         ScriptableObject values = (ScriptableObject) context.newObject(global);
 
         putNumber(values, KIND_PROPERTY, kind.ordinal());
@@ -51,6 +54,8 @@ final class ScriptSimulationUtils {
                 putUnit(values, pool, "killer", died.getKiller());
                 putNumber(values, "killerPlayer", died.getKillerPlayer());
                 putNumber(values, "weapon", died.getWeapon());
+                putNumber(values, "x", positionX);
+                putNumber(values, "y", positionY);
             }
             case UnitDamagedEvent damaged -> {
                 putMainUnit(values, pool, damaged.getTarget());

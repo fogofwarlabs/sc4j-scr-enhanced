@@ -7,6 +7,7 @@
 
     var NONE = prelude.NONE;
     var createObject = prelude.createObject;
+    var isObjectOf = prelude.isObjectOf;
     var requireObject = prelude.requireObject;
     var positionPrototype = prelude.positionPrototype;
     var typePrototype = prelude.typePrototype;
@@ -16,6 +17,7 @@
     var ResourceType = prelude.ResourceType;
     var requireUnitId = prelude.requireUnitId;
     var imagePrototype = prelude.imagePrototype;
+    var soundPrototype = prelude.soundPrototype;
     var readGraphicsIds = prelude.readGraphicsIds;
     var commandCard = prelude.commandCard;
 
@@ -242,10 +244,16 @@
 
     // The game sounds.
     var sound = freeze({
-                           // Plays a sound of sfxdata.dat by its id at a position, louder the nearer it is to the screen.
-                           playAt: function (soundId, position) {
+                           // Plays a sound of sfxdata.dat by its id, or a sound of the resource folder, at a position, louder the nearer it is
+                           // to the screen.
+                           playAt: function (sound, position) {
                                requireObject(position, positionPrototype, 'A position');
-                               core.sound.playAt(soundId, position.x, position.y);
+
+                               if (isObjectOf(sound, soundPrototype)) {
+                                   core.sound.playResourceAt(sound.id, position.x, position.y);
+                               } else {
+                                   core.sound.playAt(sound, position.x, position.y);
+                               }
                            }
                        });
 

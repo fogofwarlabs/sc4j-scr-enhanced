@@ -6,7 +6,8 @@
 // The entry points: frame(frame) writes the cheat bits game.setCheatEnabled keeps, calls onStart at the first frame, then the due timers, the
 // channel handlers of the frame's commands, the event hooks of the frame's events and onFrame; decide(kind, record) calls the decision hooks;
 // localFrame(frame), render() and localInput(record) call the local hooks, and localInput returns true when a hook consumed the input. localFrame
-// first sets the states of the script buttons, and localInput hands a command card button input that no hook consumed to the script buttons. The
+// first sets the states of the script buttons, and localInput hands a command card button input that no hook consumed to the script buttons;
+// setLocal(local) sets whether the console code that runs next is local code. The
 // runtime's host runs each call of a hook, timer or handler (host.call), lists the loaded modules (host.getModules) and learns which decisions have
 // hooks (host.setDecisionHooks).
 (function (core, prelude) {
@@ -139,12 +140,13 @@
         UnitCreated: {fields: UNIT_FIELDS, read: readUnitFields},
         UnitCompleted: {fields: UNIT_FIELDS, read: readUnitFields},
         UnitDied: {
-            fields: UNIT_FIELDS.concat(['killer', 'killerPlayer', 'weapon']),
+            fields: UNIT_FIELDS.concat(['killer', 'killerPlayer', 'weapon', 'position']),
             read: function (record) {
                 var fields = readUnitFieldsWith('killer')(record);
 
                 fields.killerPlayer = getPlayer(record.killerPlayer);
                 fields.weapon = WeaponType.get(record.weapon);
+                fields.position = createPosition(record.x, record.y);
 
                 return fields;
             }
@@ -728,7 +730,12 @@
             return record.consumed === true;
         }
 
-        return freeze({frame: frame, localFrame: localFrame, render: render, decide: decide, localInput: localInput});
+        // The console: whether the console code that runs next is local code.
+        function setLocal(local) {
+            execution.local = local === true;
+        }
+
+        return freeze({frame: frame, localFrame: localFrame, render: render, decide: decide, localInput: localInput, setLocal: setLocal});
     }
 
     return {

@@ -1,6 +1,7 @@
 package org.fogofwarlabs.sc4j.screnhanced.script;
 
 import org.fogofwarlabs.sc4j.base.exception.Exceptions;
+import org.fogofwarlabs.sc4j.screnhanced.script.inspector.ScriptInspector;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
@@ -8,6 +9,7 @@ import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,10 +25,11 @@ import java.util.concurrent.TimeUnit;
  * source map is written next to the output file ({@link ScriptSourceMap#resolveFile}), not into the map. {@code unpack <map> -o <folder>}
  * writes the package of the map to the folder, which must be absent or empty, and refuses a protected map; {@code trace <source map> --at
  * <script>:<line>} prints the original location of a location of a protected script, and {@code trace <source map> --log <file>} prints the
- * file, such as a player's log, with the original locations; {@code run <map> --script <folder> [--melee] [--watch] [--install <folder>]}
- * packs the script folder into a copy of the map and runs SC:R Enhanced of an SC4J install on it until the game ends ({@link ScriptRunner}),
- * as a melee game with {@code --melee}, else as a Use Map Settings game, packing again on every change of the folder with {@code --watch}.
- * The install is the one {@code --install} names, else {@link ScriptRunner#findInstall()}.
+ * file, such as a player's log, with the original locations; {@code run <map> --script <folder> [--melee] [--watch] [--inspect[=<port>]]
+ * [--install <folder>]} packs the script folder into a copy of the map and runs SC:R Enhanced of an SC4J install on it until the game ends
+ * ({@link ScriptRunner}), as a melee game with {@code --melee}, else as a Use Map Settings game, packing again on every change of the folder
+ * with {@code --watch}, with the DevTools console on the port, by default {@value ScriptInspector#DEFAULT_PORT}, with {@code --inspect}. The
+ * install is the one {@code --install} names, else {@link ScriptRunner#findInstall()}.
  */
 public final class ScriptTool {
     /**
@@ -82,6 +85,11 @@ public final class ScriptTool {
      */
     public static final @NotNull String WATCH_OPTION = "--watch";
     /**
+     * The option of {@value #RUN_COMMAND} that switches the DevTools console on, at the default port or, as {@code --inspect=<port>}, at a
+     * port.
+     */
+    public static final @NotNull String INSPECT_OPTION = "--inspect";
+    /**
      * The option of {@value #RUN_COMMAND} that names the SC4J install.
      */
     public static final @NotNull String INSTALL_OPTION = "--install";
@@ -91,7 +99,7 @@ public final class ScriptTool {
     public static final @NotNull String USAGE = "Usage: init <folder> | check <folder> | pack <map> --script <folder> -o <output> [--protect] | " +
                                                 "unpack <map> -o <folder> | trace <source map> --at <script>:<line> | " +
                                                 "trace <source map> --log <file> | run <map> --script <folder> [--melee] [--watch] " +
-                                                "[--install <folder>]";
+                                                "[--inspect[=<port>]] [--install <folder>]";
 
     private static final int COMMAND_ARGUMENT = 0;
     private static final int PATH_ARGUMENT = 1;
@@ -99,6 +107,8 @@ public final class ScriptTool {
     private static final int SUCCESS_EXIT = 0;
     private static final int FAILURE_EXIT = 1;
     private static final char LOCATION_SEPARATOR = ':';
+    private static final char OPTION_VALUE_SEPARATOR = '=';
+    private static final int LARGEST_PORT = 0xFFFF;
     /**
      * The milliseconds between two looks at the script folder while the game runs.
      */
@@ -299,25 +309,34 @@ public final class ScriptTool {
     }
 
     /**
-     * Packs the script folder into a copy of the map, starts SC:R Enhanced on it, as a melee game with {@value #MELEE_OPTION}, and waits for
-     * the game to end; with {@value #WATCH_OPTION} it packs again on every change of the script folder meanwhile.
+     * Packs the script folder into a copy of the map, starts SC:R Enhanced on it, as a melee game with {@value #MELEE_OPTION} and with the
+     * DevTools console with {@value #INSPECT_OPTION}, and waits for the game to end; with {@value #WATCH_OPTION} it packs again on every change
+     * of the script folder meanwhile.
      */
     private static int runGame(@NotNull String @NotNull [] arguments, @NotNull Path map, @NotNull PrintStream output, @NotNull PrintStream errors,
                                @NotNull ScriptRunner.ProcessStarter starter) throws IOException, InterruptedException {
-        Map<String, String> values = readOptions(arguments, List.of(SCRIPT_OPTION, INSTALL_OPTION), List.of(MELEE_OPTION, WATCH_OPTION),
-                                                 List.of(SCRIPT_OPTION));
+        List<String> remaining = new ArrayList<>(List.of(arguments));
+        int inspectPort = readInspectPort(remaining);
+        Map<String, String> values = readOptions(remaining.toArray(String[]::new), List.of(SCRIPT_OPTION, INSTALL_OPTION),
+                                                 List.of(MELEE_OPTION, WATCH_OPTION), List.of(SCRIPT_OPTION));
         Path install = values.containsKey(INSTALL_OPTION) ? Path.of(values.get(INSTALL_OPTION)) : ScriptRunner.findInstall();
 
         if (install == null) {
             throw Exceptions.newIllegalArgumentException("No SC4J install is known: name one with {0}.", INSTALL_OPTION);
         }
 
-        ScriptRunner runner = new ScriptRunner(install, map, Path.of(values.get(SCRIPT_OPTION)), values.containsKey(MELEE_OPTION), starter);
+        ScriptRunner runner = new ScriptRunner(install, map, Path.of(values.get(SCRIPT_OPTION)), values.containsKey(MELEE_OPTION), inspectPort,
+                                               starter);
         boolean watching = values.containsKey(WATCH_OPTION);
 
         printPacked(output, runner.pack(), runner.getPackedMap());
 
         Process process = runner.start(ScriptRunner.getJavaProgram());
+
+        if (inspectPort != ScriptRunner.NO_INSPECT_PORT) {
+            output.println(Exceptions.format("DevTools console on {0}:{1} once the game runs: open chrome://inspect and add {0}:{1} to its targets.",
+                                             ScriptInspector.HOST, Integer.toString(inspectPort)));
+        }
 
         if (watching) {
             output.println("Watching the script folder: a change is packed again and loads when the map starts again.");
@@ -343,6 +362,49 @@ public final class ScriptTool {
     private static void printPacked(@NotNull PrintStream output, @NotNull ScriptPackage scriptPackage, @NotNull Path packedMap) {
         output.println(Exceptions.format("Packed {0} scripts and {1} resources into {2}.", scriptPackage.getScripts().size(),
                                          scriptPackage.getResources().size(), packedMap));
+    }
+
+    /**
+     * Removes the option {@value #INSPECT_OPTION} from the options after the path and reads its port.
+     *
+     * @param arguments the command and its arguments, without the option afterwards
+     * @return the port, {@link ScriptInspector#DEFAULT_PORT} without a value, or {@link ScriptRunner#NO_INSPECT_PORT} without the option
+     * @throws IllegalArgumentException if the option is repeated or its port is not a port number
+     */
+    private static int readInspectPort(@NotNull List<String> arguments) {
+        int port = ScriptRunner.NO_INSPECT_PORT;
+
+        for (int index = arguments.size() - 1; index >= FIRST_OPTION_ARGUMENT; index--) {
+            String argument = arguments.get(index);
+
+            if (!argument.equals(INSPECT_OPTION) && !argument.startsWith(INSPECT_OPTION + OPTION_VALUE_SEPARATOR)) {
+                continue;
+            }
+
+            if (port != ScriptRunner.NO_INSPECT_PORT) {
+                throw Exceptions.newIllegalArgumentException("Repeated option: {0}", INSPECT_OPTION);
+            }
+
+            port = argument.equals(INSPECT_OPTION) ? ScriptInspector.DEFAULT_PORT : parsePort(argument.substring(INSPECT_OPTION.length() + 1));
+
+            arguments.remove(index);
+        }
+
+        return port;
+    }
+
+    private static int parsePort(@NotNull String text) {
+        try {
+            int port = Integer.parseInt(text);
+
+            if (port > 0 && port <= LARGEST_PORT) {
+                return port;
+            }
+        } catch (NumberFormatException exception) {
+            // The text is no number.
+        }
+
+        throw Exceptions.newIllegalArgumentException("The port {0} of {1} is not a port number.", text, INSPECT_OPTION);
     }
 
     /**
