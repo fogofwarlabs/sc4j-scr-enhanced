@@ -12,6 +12,8 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.function.IntPredicate;
+import java.util.function.IntSupplier;
 import java.util.function.Supplier;
 
 /**
@@ -31,12 +33,62 @@ import java.util.function.Supplier;
  * <p>
  * The GRPs and anims are read from byte ranges that are not copied ({@link #readGrp}, {@link #readAnim}); the parsed anims of the game are kept
  * within {@code 256} MiB, as those of the classic image graphics.
+ * <p>
+ * One image may play frame sets ({@link #playImage}): from the game frame of the call, each frame set is drawn for a number of game frames, of
+ * the image's own graphics or of other graphics, then the image draws its own frame and graphics again, or the frame sets start over for a
+ * looping play. The image's direction is added to each frame set of graphics of {@value SheetLayout#TURNING_DIRECTIONS} directions. An image type
+ * may loop frame sets the same way for every image of the type that draws its own frame ({@link #setTypeAnimation}). A shadow image of a sprite
+ * whose main image draws graphics made from a sheet ({@link ImageGraphics#isSheet()}) draws the sheet's shadow graphics, else the main image's
+ * graphics, at the frame the main image draws.
  */
 public final class ImageReplacements {
     /**
      * The value of no frame and no draw function.
      */
     private static final int NONE = -1;
+    /**
+     * The frames of a frame set of an image that turns.
+     */
+    private static final int TURNING_DIRECTIONS = SheetLayout.TURNING_DIRECTIONS;
+
+    /**
+     * Frame sets drawn one after another, each for a number of game frames from a start frame.
+     */
+    private static final class Playback {
+        private final int @NotNull [] frameSets;
+        private final int frameTime;
+        private final int startFrame;
+        private final boolean loop;
+        private final @Nullable ImageGraphics graphics;
+
+        private Playback(int @NotNull [] frameSets, int frameTime, int startFrame, boolean loop, @Nullable ImageGraphics graphics) {
+            this.frameSets  = frameSets;
+            this.frameTime  = frameTime;
+            this.startFrame = startFrame;
+            this.loop       = loop;
+            this.graphics   = graphics;
+        }
+
+        /**
+         * Finds the frame set drawn at a game frame.
+         *
+         * @param frame the game frame
+         * @return the frame set, or {@code -1} once a play that does not loop has ended
+         */
+        private int findFrameSet(int frame) {
+            int index = Math.max(0, frame - this.startFrame) / this.frameTime;
+
+            if (index >= this.frameSets.length) {
+                if (!this.loop) {
+                    return NONE;
+                }
+
+                index %= this.frameSets.length;
+            }
+
+            return this.frameSets[index];
+        }
+    }
 
     /**
      * The graphics of one unit's images of one image type.
@@ -85,6 +137,10 @@ public final class ImageReplacements {
          * The image's own draw function when the draw function was set.
          */
         private int ownDrawFunction;
+        /**
+         * The frame sets the image plays, {@code null} for none.
+         */
+        private @Nullable Playback playback;
 
         private ImageOverride(@NotNull SpriteImagePool pool, long generation) {
             this.pool       = pool;
@@ -96,13 +152,14 @@ public final class ImageReplacements {
             this.frameHeld       = false;
             this.drawFunction    = NONE;
             this.ownDrawFunction = 0;
+            this.playback        = null;
         }
 
         /**
-         * @return {@code true} if the override has no graphics, frame and draw function, {@code false} otherwise
+         * @return {@code true} if the override has no graphics, frame, draw function and play, {@code false} otherwise
          */
         private boolean isEmpty() {
-            return this.graphics == null && this.frame == NONE && this.drawFunction == NONE;
+            return this.graphics == null && this.frame == NONE && this.drawFunction == NONE && this.playback == null;
         }
     }
 
@@ -123,6 +180,25 @@ public final class ImageReplacements {
     /**
      * Checks whether a sprite is the sprite of a unit or of its subunit.
      */
+    private static @NotNull Playback createPlayback(int @NotNull [] frameSets, int frameTime, int startFrame, boolean loop,
+                                                    @Nullable ImageGraphics graphics) {
+        if (frameSets.length == 0) {
+            throw Exceptions.newIllegalArgumentException("A play needs a frame set.");
+        }
+
+        if (frameTime < 1) {
+            throw Exceptions.newIllegalArgumentException("The frame time {0} is below 1.", frameTime);
+        }
+
+        for (int frameSet : frameSets) {
+            if (frameSet < 0) {
+                throw Exceptions.newIllegalArgumentException("The frame set {0} is negative.", frameSet);
+            }
+        }
+
+        return new Playback(frameSets.clone(), frameTime, startFrame, loop, graphics);
+    }
+
     private static boolean isUnitSprite(@NotNull Unit unit, @NotNull Sprite sprite) {
         if (unit.getSpriteOrNull() == sprite) {
             return true;
@@ -133,22 +209,20 @@ public final class ImageReplacements {
         return subunit != null && subunit.getSpriteOrNull() == sprite;
     }
 
-    private static int requireImageTypeId(int imageTypeId) {
-        if (imageTypeId < 0 || imageTypeId >= ScrImages.COUNT) {
-            throw Exceptions.newIllegalArgumentException("The image type {0} is not from 0 to {1}.", imageTypeId, ScrImages.COUNT - 1);
-        }
-
-        return imageTypeId;
-    }
-
 
     private final @NotNull Supplier<@Nullable UnitPool> units;
+    private final @NotNull IntSupplier frames;
+    private final @NotNull IntPredicate turning;
     private final EmbeddedAnim.@NotNull Cache animations;
 
     /**
      * The graphics per image type, {@code null} for the installed graphics.
      */
     private final @Nullable ImageGraphics @NotNull [] typeGraphics;
+    /**
+     * The frame sets every image of an image type loops, by image type; {@code null} for none.
+     */
+    private final @Nullable Playback @NotNull [] typeAnimations;
     private final @NotNull List<UnitReplacement> unitReplacements;
     /**
      * The overrides of single images by image pool slot.
@@ -156,15 +230,31 @@ public final class ImageReplacements {
     private final @NotNull Map<Integer, ImageOverride> imageOverrides;
 
     /**
-     * Creates an {@link ImageReplacements} instance without replacements.
+     * Creates an {@link ImageReplacements} instance without replacements over the native image types, whose plays stay at their first frame set.
      *
      * @param units the game's unit pool, {@code null} before the game has one
      */
     public ImageReplacements(@NotNull Supplier<@Nullable UnitPool> units) {
+        this(units, () -> 0, ScrImages.COUNT, imageTypeId -> false);
+    }
+
+    /**
+     * Creates an {@link ImageReplacements} instance without replacements.
+     *
+     * @param units          the game's unit pool, {@code null} before the game has one
+     * @param frames         the game's current frame, which times the plays
+     * @param imageTypeCount the number of image types that take graphics, the native ones first
+     * @param turning        tells whether an image type has Graphic Turns, which makes graphics of unknown frame sets turn
+     */
+    public ImageReplacements(@NotNull Supplier<@Nullable UnitPool> units, @NotNull IntSupplier frames, int imageTypeCount,
+                             @NotNull IntPredicate turning) {
         this.units      = units;
+        this.frames     = frames;
+        this.turning    = turning;
         this.animations = new EmbeddedAnim.Cache(ClassicImageGraphics.ANIMATION_BUDGET);
 
-        this.typeGraphics     = new ImageGraphics[ScrImages.COUNT];
+        this.typeGraphics     = new ImageGraphics[imageTypeCount];
+        this.typeAnimations   = new Playback[imageTypeCount];
         this.unitReplacements = new ArrayList<>();
         this.imageOverrides   = new HashMap<>();
     }
@@ -210,6 +300,45 @@ public final class ImageReplacements {
     }
 
     /**
+     * Creates the graphics of frames of a sheet ({@link ImageGraphics#ofSheet}): the GRP made already, and an anim built on a worker thread when
+     * it is first drawn ({@link PictureSheetConverter#createAnim}), whose parsed sheet is kept within the anim budget of the game.
+     *
+     * @param sheet     the sheet
+     * @param frames    the sheet frame of each frame of the graphics
+     * @param grp       the GRP bytes of the frames ({@link PictureSheetConverter#createGrp})
+     * @param shadowGrp the GRP bytes of the frames of the shadow picture, or {@code null} for a sheet without
+     * @return the created graphics
+     * @throws IOException if a GRP cannot be read
+     */
+    public @NotNull ImageGraphics createSheetGraphics(@NotNull PictureSheet sheet, int @NotNull [] frames, byte @NotNull [] grp,
+                                                      byte @Nullable [] shadowGrp) throws IOException {
+        int scale = sheet.getLayout().getScale() == EmbeddedAnim.HD_SCALE ? EmbeddedAnim.HD_SCALE : EmbeddedAnim.HD2_SCALE;
+        int[] copied = frames.clone();
+        ImageGraphics shadow = null;
+
+        if (shadowGrp != null) {
+            ImageAnim shadowAnim = new ImageAnim(sheet.getName(), scale,
+                                                 new EmbeddedAnim(() -> PictureSheetConverter.createAnim(sheet, copied, true), this.animations));
+
+            shadow = ImageGraphics.ofSheet(ImageGrp.read(shadowGrp, 0, shadowGrp.length, sheet.getName()), shadowAnim,
+                                           sheet.getLayout().getDirections(), null);
+        }
+
+        ImageAnim anim = new ImageAnim(sheet.getName(), scale,
+                                       new EmbeddedAnim(() -> PictureSheetConverter.createAnim(sheet, copied, false), this.animations));
+
+        return ImageGraphics.ofSheet(ImageGrp.read(grp, 0, grp.length, sheet.getName()), anim, sheet.getLayout().getDirections(), shadow);
+    }
+
+    private int requireImageTypeId(int imageTypeId) {
+        if (imageTypeId < 0 || imageTypeId >= this.typeGraphics.length) {
+            throw Exceptions.newIllegalArgumentException("The image type {0} is not from 0 to {1}.", imageTypeId, this.typeGraphics.length - 1);
+        }
+
+        return imageTypeId;
+    }
+
+    /**
      * Finds the graphics of an image type.
      *
      * @param imageTypeId the image type, an {@code images.dat} entry
@@ -217,7 +346,7 @@ public final class ImageReplacements {
      * @throws IllegalArgumentException if the image type is outside {@code images.dat}
      */
     public @Nullable ImageGraphics findImageGraphics(int imageTypeId) {
-        return this.typeGraphics[requireImageTypeId(imageTypeId)];
+        return this.typeGraphics[this.requireImageTypeId(imageTypeId)];
     }
 
     /**
@@ -229,7 +358,7 @@ public final class ImageReplacements {
      * @throws IllegalArgumentException if the image type is outside {@code images.dat}
      */
     public @Nullable ImageGraphics findUnitImageGraphics(@NotNull Unit unit, int imageTypeId) {
-        requireImageTypeId(imageTypeId);
+        this.requireImageTypeId(imageTypeId);
 
         UnitReplacement replacement = this.findUnitReplacement(unit, imageTypeId);
 
@@ -246,11 +375,70 @@ public final class ImageReplacements {
     public int findImageFrame(@NotNull SpriteImage image) {
         ImageOverride override = this.findImageOverride(image);
 
-        if (override == null || override.frame == NONE) {
+        if (override != null && override.playback != null) {
+            int frame = this.findPlaybackFrame(image, override.playback);
+
+            if (frame >= 0) {
+                return frame;
+            }
+        }
+
+        if (override != null && override.frame != NONE && (override.frameHeld || override.ownFrame == image.getDrawnFrameIndex())) {
+            return override.frame;
+        }
+
+        int imageTypeId = image.getImageTypeId();
+        Playback animation = imageTypeId >= 0 && imageTypeId < this.typeAnimations.length ? this.typeAnimations[imageTypeId] : null;
+
+        if (animation != null) {
+            return this.findPlaybackFrame(image, animation);
+        }
+
+        SpriteImage main = this.findShadowMain(image);
+
+        return main == null ? NONE : this.findImageFrame(main);
+    }
+
+    /**
+     * Finds the frame a play draws now: its frame set, plus the image's direction for graphics of turning frame sets.
+     *
+     * @return the frame, or {@code -1} once a play that does not loop has ended
+     */
+    private int findPlaybackFrame(@NotNull SpriteImage image, @NotNull Playback playback) {
+        int frameSet = playback.findFrameSet(this.frames.getAsInt());
+
+        if (frameSet < 0) {
             return NONE;
         }
 
-        return override.frameHeld || override.ownFrame == image.getDrawnFrameIndex() ? override.frame : NONE;
+        ImageGraphics graphics = playback.graphics != null ? playback.graphics : this.findOwnGraphics(image);
+        int directions = graphics != null && graphics.getDirections() != 0 ? graphics.getDirections()
+                                                                           : this.turning.test(image.getImageTypeId()) ? TURNING_DIRECTIONS : 1;
+
+        return directions == TURNING_DIRECTIONS ? frameSet * TURNING_DIRECTIONS + image.getFrameIndexOffset() : frameSet;
+    }
+
+    /**
+     * Finds the main image a shadow image follows: the main image of its sprite when the image draws with the shadow draw function and the main
+     * image draws graphics made from a sheet.
+     *
+     * @return the main image, or {@code null} if the image follows none
+     */
+    private @Nullable SpriteImage findShadowMain(@NotNull SpriteImage image) {
+        if (image.getModifier() != SpriteImage.MODIFIER_SHADOW) {
+            return null;
+        }
+
+        Sprite sprite = image.getSprite();
+        SpriteImage main = sprite == null ? null : sprite.getMainImage();
+
+        if (main == null || main == image || main.getModifier() == SpriteImage.MODIFIER_SHADOW) {
+            return null;
+        }
+
+        ImageGraphics graphics = this.findGraphics(main);
+
+        return graphics != null && graphics.isSheet() ? main : null;
     }
 
     /**
@@ -276,6 +464,52 @@ public final class ImageReplacements {
 
 
     /**
+     * Loops frame sets for every image of an image type that draws its own frame, timed from game frame {@code 0}.
+     *
+     * @param imageTypeId the image type
+     * @param frameSets   the frame sets, drawn one after another
+     * @param frameTime   the game frames each frame set is drawn, at least {@code 1}
+     * @throws IllegalArgumentException if the image type is outside the image types, there is no frame set, a frame set is negative or the frame time is below {@code 1}
+     */
+    public void setTypeAnimation(int imageTypeId, int @NotNull [] frameSets, int frameTime) {
+        this.typeAnimations[this.requireImageTypeId(imageTypeId)] = createPlayback(frameSets, frameTime, 0, true, null);
+    }
+
+    /**
+     * Plays frame sets on one image while its slot holds it, from the current game frame; ends a frame set or held frame
+     * ({@link #setImageFrame}, {@link #holdImageFrame}) and the play before.
+     *
+     * @param image     an allocated image of the image pool
+     * @param frameSets the frame sets, drawn one after another
+     * @param frameTime the game frames each frame set is drawn, at least {@code 1}
+     * @param loop      whether the frame sets start over after the last one until {@link #stopPlayingImage}
+     * @param graphics  the graphics drawn meanwhile, or {@code null} for the image's own
+     * @throws IllegalArgumentException if the image's slot is not allocated, there is no frame set, a frame set is negative or the frame time is below {@code 1}
+     */
+    public void playImage(@NotNull SpriteImage image, int @NotNull [] frameSets, int frameTime, boolean loop, @Nullable ImageGraphics graphics) {
+        Playback playback = createPlayback(frameSets, frameTime, this.frames.getAsInt(), loop, graphics);
+        ImageOverride override = this.requireImageOverride(image);
+
+        override.frame     = NONE;
+        override.frameHeld = false;
+        override.playback  = playback;
+    }
+
+    /**
+     * Ends the play of one image at once: it draws its own frame and graphics again.
+     *
+     * @param image an image of the image pool
+     */
+    public void stopPlayingImage(@NotNull SpriteImage image) {
+        ImageOverride override = this.findImageOverride(image);
+
+        if (override != null) {
+            override.playback = null;
+            this.removeIfEmpty(image, override);
+        }
+    }
+
+    /**
      * Replaces the graphics of every image of an image type.
      *
      * @param imageTypeId the image type, an {@code images.dat} entry
@@ -283,7 +517,7 @@ public final class ImageReplacements {
      * @throws IllegalArgumentException if the image type is outside {@code images.dat}
      */
     public void replaceImage(int imageTypeId, @NotNull ImageGraphics graphics) {
-        this.typeGraphics[requireImageTypeId(imageTypeId)] = graphics;
+        this.typeGraphics[this.requireImageTypeId(imageTypeId)] = graphics;
     }
 
     /**
@@ -293,7 +527,7 @@ public final class ImageReplacements {
      * @throws IllegalArgumentException if the image type is outside {@code images.dat}
      */
     public void restoreImage(int imageTypeId) {
-        this.typeGraphics[requireImageTypeId(imageTypeId)] = null;
+        this.typeGraphics[this.requireImageTypeId(imageTypeId)] = null;
     }
 
     /**
@@ -306,7 +540,7 @@ public final class ImageReplacements {
      * @throws IllegalStateException    if the game has no unit pool
      */
     public void replaceUnitImage(@NotNull Unit unit, int imageTypeId, @NotNull ImageGraphics graphics) {
-        requireImageTypeId(imageTypeId);
+        this.requireImageTypeId(imageTypeId);
 
         UnitPool pool = this.requireUnitPool();
 
@@ -331,7 +565,7 @@ public final class ImageReplacements {
      * @throws IllegalArgumentException if the image type is outside {@code images.dat}
      */
     public void restoreUnitImage(@NotNull Unit unit, int imageTypeId) {
-        requireImageTypeId(imageTypeId);
+        this.requireImageTypeId(imageTypeId);
 
         UnitReplacement replacement = this.findUnitReplacement(unit, imageTypeId);
 
@@ -392,6 +626,7 @@ public final class ImageReplacements {
             if (override != null) {
                 override.frame     = NONE;
                 override.frameHeld = false;
+                override.playback  = null;
                 this.removeIfEmpty(image, override);
             }
 
@@ -403,6 +638,7 @@ public final class ImageReplacements {
         override.frame     = frame;
         override.ownFrame  = image.getDrawnFrameIndex();
         override.frameHeld = held;
+        override.playback  = null;
     }
 
     /**
@@ -430,12 +666,20 @@ public final class ImageReplacements {
     }
 
     /**
-     * Forgets the graphics of the units whose slot was freed or holds another unit, and the overrides of the images whose slot was freed or
-     * holds another image.
+     * Forgets the graphics of the units whose slot was freed or holds another unit, the overrides of the images whose slot was freed or holds
+     * another image, and the plays that ended.
      */
     public void removeFreedUnits() {
         if (!this.imageOverrides.isEmpty()) {
-            this.imageOverrides.entrySet().removeIf(entry -> !isHeld(entry.getValue(), entry.getKey()));
+            int frame = this.frames.getAsInt();
+
+            for (ImageOverride override : this.imageOverrides.values()) {
+                if (override.playback != null && override.playback.findFrameSet(frame) < 0) {
+                    override.playback = null;
+                }
+            }
+
+            this.imageOverrides.entrySet().removeIf(entry -> !isHeld(entry.getValue(), entry.getKey()) || entry.getValue().isEmpty());
         }
 
         if (this.unitReplacements.isEmpty()) {
@@ -448,13 +692,45 @@ public final class ImageReplacements {
     }
 
     /**
-     * Finds the graphics a sprite image draws instead of its installed graphics: those of the unit it belongs to and its image type, else those
-     * of its image type.
+     * Finds the graphics a sprite image draws instead of its installed graphics: those of its play, those of the image, those of the unit it
+     * belongs to and its image type, else those of its image type; a shadow image of a main image with graphics made from a sheet draws their
+     * shadow graphics, else the main image's graphics.
      *
      * @param image an image of a drawn sprite
      * @return the graphics, or {@code null} for the installed graphics
      */
     public @Nullable ImageGraphics findGraphics(@NotNull SpriteImage image) {
+        ImageOverride override = this.findImageOverride(image);
+
+        if (override != null && override.playback != null && override.playback.graphics != null &&
+            override.playback.findFrameSet(this.frames.getAsInt()) >= 0) {
+            return override.playback.graphics;
+        }
+
+        ImageGraphics graphics = this.findOwnGraphics(image);
+
+        if (graphics != null) {
+            return graphics;
+        }
+
+        SpriteImage main = this.findShadowMain(image);
+
+        if (main == null) {
+            return null;
+        }
+
+        ImageGraphics mainGraphics = this.findGraphics(main);
+
+        return mainGraphics == null || mainGraphics.getShadow() == null ? mainGraphics : mainGraphics.getShadow();
+    }
+
+    /**
+     * Finds the graphics of an image without its play and the shadow rule: those of the image, of the unit it belongs to and its image type,
+     * else those of its image type.
+     *
+     * @return the graphics, or {@code null} for the installed graphics
+     */
+    private @Nullable ImageGraphics findOwnGraphics(@NotNull SpriteImage image) {
         ImageOverride override = this.findImageOverride(image);
 
         if (override != null && override.graphics != null) {
@@ -463,7 +739,7 @@ public final class ImageReplacements {
 
         int imageTypeId = image.getImageTypeId();
 
-        if (imageTypeId < 0 || imageTypeId >= ScrImages.COUNT) {
+        if (imageTypeId < 0 || imageTypeId >= this.typeGraphics.length) {
             return null;
         }
 

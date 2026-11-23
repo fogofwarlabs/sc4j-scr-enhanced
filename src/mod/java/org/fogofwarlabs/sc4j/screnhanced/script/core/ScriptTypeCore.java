@@ -41,6 +41,10 @@ import java.util.*;
  * image type of a game without game data and when {@code images.rel} cannot be read. {@code getDamageOverlayCount(id)} and
  * {@code setDamageOverlayCount(id, count)} read and store the image type's damage overlay byte as an EUD write does: twice the number of
  * flame positions of its damage overlay, which a unit with the image as its main image takes as its number of damage states.
+ * <p>
+ * The image, sprite and flingy types a script registers ({@link ScriptContentCore}) join their namespaces after the native entries:
+ * {@code getCount()} counts them and {@code getName(id)} gives the name they were registered with. A registered image type draws its own anim;
+ * its damage overlay byte is read only.
  */
 final class ScriptTypeCore {
     /**
@@ -85,34 +89,41 @@ final class ScriptTypeCore {
     );
 
     /**
-     * Defines the type namespaces.
+     * Defines the type namespaces, and {@code create} of the image, sprite and flingy types ({@link ScriptContentCore}).
      *
-     * @param context    the current context
-     * @param scriptGame the game binding
-     * @param core       the {@code core} object
-     * @param global     the global scope
+     * @param context      the current context
+     * @param scriptGame   the game binding
+     * @param graphicsCore the resources, which read sheet arguments
+     * @param core         the {@code core} object
+     * @param global       the global scope
+     * @return the registration of the image, sprite and flingy types
      */
-    static void define(@NotNull Context context, @NotNull ScriptGame scriptGame, @NotNull Scriptable core, @NotNull Scriptable global) {
+    static @NotNull ScriptContentCore define(@NotNull Context context, @NotNull ScriptGame scriptGame, @NotNull ScriptGraphicsCore graphicsCore,
+                                             @NotNull Scriptable core, @NotNull Scriptable global) {
         GameData gameData = scriptGame.getGame().getGameData();
-        List<String> imageNames = createImageNames(gameData);
-        List<String> spriteNames = createSpriteNames(gameData, imageNames);
+        List<String> imageNames = new ArrayList<>(createImageNames(gameData));
+        List<String> spriteNames = new ArrayList<>(createSpriteNames(gameData, imageNames));
+        List<String> flingyNames = new ArrayList<>(createFlingyNames(gameData, spriteNames));
+        ScriptContentCore contentCore = new ScriptContentCore(scriptGame, graphicsCore, imageNames, spriteNames, flingyNames);
 
         defineNames(ScriptCoreUtils.createNamespace(context, global, core, "unitType"), global, "unit type", getNames(ScrUnits.getTypes()));
         defineNames(ScriptCoreUtils.createNamespace(context, global, core, "weaponType"), global, "weapon type", getNames(ScrWeapons.getTypes()));
-        defineNames(ScriptCoreUtils.createNamespace(context, global, core, "flingyType"), global, "flingy type",
-                    createFlingyNames(gameData, spriteNames));
-        defineNames(ScriptCoreUtils.createNamespace(context, global, core, "spriteType"), global, "sprite type", spriteNames);
+        Scriptable flingyTypes = defineNames(ScriptCoreUtils.createNamespace(context, global, core, "flingyType"), global, "flingy type", flingyNames);
+        Scriptable spriteTypes = defineNames(ScriptCoreUtils.createNamespace(context, global, core, "spriteType"), global, "sprite type", spriteNames);
         Scriptable imageTypes = defineNames(ScriptCoreUtils.createNamespace(context, global, core, "imageType"), global, "image type", imageNames);
         defineNames(ScriptCoreUtils.createNamespace(context, global, core, "upgradeType"), global, "upgrade type", getNames(ScrUpgrades.getTypes()));
         defineNames(ScriptCoreUtils.createNamespace(context, global, core, "techType"), global, "tech type", getNames(ScrTechs.getTypes()));
         defineNames(ScriptCoreUtils.createNamespace(context, global, core, "orderType"), global, "order type", getNames(ScrOrders.getTypes()));
 
-        defineAnimImageTypes(imageTypes, global, createAnimImageTypes(gameData));
-        defineDamageOverlayCounts(imageTypes, global, scriptGame);
+        defineAnimImageTypes(imageTypes, global, createAnimImageTypes(gameData), contentCore);
+        defineDamageOverlayCounts(imageTypes, global, scriptGame, contentCore);
+        contentCore.define(imageTypes, spriteTypes, flingyTypes, global);
+
+        return contentCore;
     }
 
     /**
-     * Defines {@code getCount()} and {@code getName(id)} of a type namespace.
+     * Defines {@code getCount()} and {@code getName(id)} of a type namespace over names that registered types may join.
      *
      * @return the namespace
      */
@@ -251,22 +262,25 @@ final class ScriptTypeCore {
      *
      * @param namespace      the namespace object
      * @param global         the global scope
-     * @param animImageTypes the image type whose HD anim each image type draws, by image type
+     * @param animImageTypes the image type whose HD anim each native image type draws, by image type
+     * @param contentCore    the registration, which counts the image types; a registered image type draws its own
      */
-    private static void defineAnimImageTypes(@NotNull Scriptable namespace, @NotNull Scriptable global, int @NotNull [] animImageTypes) {
+    private static void defineAnimImageTypes(@NotNull Scriptable namespace, @NotNull Scriptable global, int @NotNull [] animImageTypes,
+                                             @NotNull ScriptContentCore contentCore) {
         ScriptCoreUtils.defineFunction(global, namespace, "getAnimImageType", 1, (context, scope, thisObject, arguments) -> {
-            int id = ScriptCoreUtils.requireId("image type", ScriptCoreUtils.readInteger(arguments, 0), ScrImages.COUNT);
+            int id = ScriptCoreUtils.requireId("image type", ScriptCoreUtils.readInteger(arguments, 0), contentCore.getImageTypeCount());
 
-            return (double) animImageTypes[id];
+            return (double) (id < animImageTypes.length ? animImageTypes[id] : id);
         });
     }
 
     /**
      * Defines {@code getDamageOverlayCount(id)} and {@code setDamageOverlayCount(id, count)} of the image type namespace.
      */
-    private static void defineDamageOverlayCounts(@NotNull Scriptable namespace, @NotNull Scriptable global, @NotNull ScriptGame scriptGame) {
+    private static void defineDamageOverlayCounts(@NotNull Scriptable namespace, @NotNull Scriptable global, @NotNull ScriptGame scriptGame,
+                                                  @NotNull ScriptContentCore contentCore) {
         ScriptCoreUtils.defineFunction(global, namespace, "getDamageOverlayCount", 1, (context, scope, thisObject, arguments) -> {
-            int id = ScriptCoreUtils.requireId("image type", ScriptCoreUtils.readInteger(arguments, 0), ScrImages.COUNT);
+            int id = ScriptCoreUtils.requireId("image type", ScriptCoreUtils.readInteger(arguments, 0), contentCore.getImageTypeCount());
 
             try {
                 return (double) scriptGame.getGame().requireGameData().getImageDamageOverlayCount(id);

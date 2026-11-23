@@ -561,6 +561,50 @@ const heroes = game.map.resources.readJson('data/heroes.json');
 - `unit.playAnimation(Animation.CastSpell)`은 명령처럼 iscript 애니메이션을 그 안의 opcode와 함께 실행합니다. 공격 애니메이션은 유닛의 대상을 공격합니다. 끊으면 안 되는 구간을 실행 중인 스프라이트는 애니메이션을 유지하고, 유닛의 명령은 상태가 바뀌면 자기 애니메이션을 다시 실행합니다. `Init`과 `Death`는 거부됩니다. 공유 코드 전용입니다.
 - 스프라이트 타입의 선택 원, 그 세로 오프셋, 체력 바 너비를 바꿀 수 있습니다: `spriteType.setSelectionCircle(size)`(0~9), `setSelectionCircleOffset(pixels)`, `setHealthBarWidth(pixels)`. 원은 보일 때, 바는 그릴 때 이 값을 씁니다. 공유 코드 전용입니다.
 
+#### 그림을 그래픽으로
+
+`game.map.resources.getSheet(name, layout)`은 PNG나 DDS 그림을 왼쪽 위부터 줄 단위로 같은 크기의 프레임으로 읽습니다:
+
+```js
+const palm = game.map.resources.getSheet('trees/palm.png', {frameWidth: 96, frameHeight: 128, anchorY: 120, shadow: 'trees/palm-shadow.png'});
+```
+
+- `frameWidth`, `frameHeight`: 그림 픽셀 단위의 프레임 크기. `frameCount`: 기본은 온전한 프레임 전부.
+- `directions: 17`: 방향을 트는 이미지. 북쪽부터 시계 방향으로 남쪽까지이고, 서쪽 절반은 뒤집어 그립니다.
+- `scale`: 맵 픽셀 하나당 그림 픽셀. 1(SD 크기), 2(HD2), 4(HD).
+- `anchorX`, `anchorY`: 이미지 위치에 놓이는 픽셀. 기본은 프레임 중앙입니다. 스프라이트는 위치로 정렬되므로 나무 밑동에 기준점을 두면 밑동보다 북쪽에 선 유닛이 나무 뒤에 그려집니다.
+- `teamColor`: 같은 크기의 그림. 알파가 픽셀이 소유자 색을 받는 세기입니다. `shadow`: 같은 크기의 그림. 알파가 그림자입니다.
+- `sd`: 같은 프레임의 GRP. SD에서 타일셋 팔레트로 바꾼 그림 대신 그립니다.
+
+시트는 GRP와 anim이 쓰이는 곳에 쓸 수 있습니다: `display.images.replace(type, {sheet: palm})`, `replaceUnit`, `image.replaceGraphics`. SD는 맵 타일셋 팔레트로 프레임을 그리고, HD와 HD2는 시트를 처음 그릴 때 만든 anim을 그립니다.
+
+`image.play({frameSets, frameTime, graphics, loop})`는 프레임 세트를 하나씩 `frameTime` 게임 프레임 동안 보여 준 뒤 이미지 자신의 프레임으로 돌아갑니다. 방향을 트는 이미지는 방향이 더해집니다. `image.stopPlaying()`으로 끝내고, `setFrame`과 `holdFrame`도 끝냅니다. 그리는 것만 바꾸며 공유 코드와 로컬 코드 모두에서 됩니다:
+
+```js
+hero.getSprite().getMainImage().play({graphics: {sheet: castSheet}, frameSets: [0, 1, 2], frameTime: 4});
+```
+
+#### 직접 만드는 타입
+
+맵은 시트를 그리는 이미지, 스프라이트, 플링기 타입을 등록할 수 있습니다. 모듈 최상위나 `onStart`의 공유 코드에서 등록하세요. 같은 호출은 모든 게임과 리플레이에서 같은 타입을 줍니다.
+
+```js
+const palmImage = ImageType.create({sheet: palm, name: 'Palm'});
+const palmSprite = SpriteType.create({image: palmImage, name: 'Palm'});
+
+function onStart() {
+    game.map.resources.readJson('data/palms.json').forEach((point) => game.createEffect(palmSprite, Position.of(point.x, point.y)));
+}
+```
+
+- `ImageType.create({sheet, name, script, frameSets, animation, drawFunction})`: `script`는 `ImageScript.Still`(Death까지 프레임 0), `ImageScript.Projectile`(총알), 또는 새 타입이 iscript, 그리기 함수, 오버레이, 플래그를 복사할 이미지 타입입니다. `frameSets`는 스크립트가 재생하는 프레임 세트마다 그것을 그릴 시트의 프레임 세트입니다. `animation: {frameSets, frameTime}`은 그 타입의 모든 이미지에 프레임 세트를 반복해 보여 줍니다(표시 전용).
+- `SpriteType.create({image, name, selectionCircle, selectionCircleOffset, healthBarWidth, visible})`.
+- `FlingyType.create({sprite, name, base, topSpeed, acceleration, haltDistance, turnRate, movementControl})`: `base`의 이동 값에 준 값을 덮어씁니다.
+- 게임은 등록한 이미지 타입의 프레임을 읽습니다. 그 타입의 스프라이트는 시트의 캔버스 크기를 가지며, 이것으로 보이는 곳과 클릭되는 곳이 정해집니다.
+- 등록한 스프라이트 타입의 효과는 마법 스프라이트와 같습니다. 유닛과 함께 정렬되고, 덮은 타일의 안개를 따르고, 시트에 그림자가 있으면 그림자를 보입니다. `sprite.playAnimation(Animation.Death)`는 `Still` 스프라이트를 한 프레임 뒤에 끝냅니다.
+- `UnitType.TerranMarine.setFlingyType(FlingyType.create({sprite, base: UnitType.TerranMarine.getFlingyType()}))`은 그 뒤에 만든 유닛에 새 모습을 줍니다. `script: ImageType.get(...)`이면 그 이미지처럼 걷고, 공격하고, 죽습니다. 초상화, 와이어프레임, 명령 아이콘은 유닛 타입의 것이 그대로입니다.
+- `game.createBullet(weapon, source, position, {target, flingy, direction})`은 직접 만든 플링기 타입으로 유닛이나 위치를 향해 총알을 쏩니다. `bullet.detonate()`는 총알이 대상에 닿았을 때처럼 끝내고, 그 Death가 무기를 적용합니다.
+
 ### 5.8 소리
 
 `display.sound.playAt(sound, position)`은 `sfxdata.dat`의 소리를 id로, 또는 `resources/`의 소리 파일을 재생합니다.
@@ -611,5 +655,7 @@ SC4J.bat tool scr-enhanced script trace Protected.scx.sourcemap.json --log sc4j.
 - 전역: `eval`, 문자열로 만드는 `Function`, `Date`, `setTimeout` 같은 타이머, Java 접근이 없습니다. `Math`는 모든 플랫폼에서 같은 결과를 냅니다.
 - 명령어 예산: 스크립트 호출 하나(불러오기, 프레임, 결정, 로컬 입력, 로컬 프레임, 그리기)는 인터프리터 명령어 5,000,000개까지 실행할 수 있고, 함수 호출은 10,000단계까지 중첩됩니다. 긴 작업은 타이머로 여러 프레임에 나누세요.
 - 스크립트 버튼: 게임마다 최대 256개.
+- 직접 만드는 타입: 게임마다 이미지 타입 256개, 스프라이트 타입 256개, 플링기 타입 128개. 시트의 캔버스는 가로세로 최대 255 맵 픽셀, 그림은 가로세로 최대 4096 픽셀, 맵의 시트 anim은 합쳐서 최대 128 MiB입니다.
+- 효과는 마법과 먼지도 쓰는 스프라이트, 이미지, 효과 슬롯을 차지합니다. 가득 차면 `createEffect`는 `null`을 돌려줍니다.
 - 저장 게임: 스크립트가 있는 게임은 저장할 수 없습니다.
 - 시작 유닛: 스타크래프트와 같이, 맵 설정 사용(Use Map Settings) 게임은 트리거가 있든 없든 맵에서 종족이 User Selectable인 플레이어에게 본진 건물과 일꾼 넷을 주고, 그 플레이어의 미리 놓인 유닛은 중립 유닛만 남깁니다. 맵에서 종족을 정해 두거나 `onStart`에서 유닛을 지우세요.

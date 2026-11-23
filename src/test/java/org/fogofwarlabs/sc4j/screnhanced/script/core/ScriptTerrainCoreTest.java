@@ -16,7 +16,7 @@ import java.util.List;
 /**
  * Tests {@code core.terrain} and the {@code tileset}, {@code terrain} and {@code Tile} objects of the prelude in a live Use Map Settings game:
  * reading tiles and their terrain, changing them through both layers, filling and copying the tiles of locations, the changes reaching the map
- * at the next frame, and the errors of positions outside the map and tiles outside the tileset.
+ * at the end of the frame start, and the errors of positions outside the map and tiles outside the tileset.
  */
 @RequiresInstallation
 @ExtendWith(GameResourcesExtension.class)
@@ -75,12 +75,6 @@ final class ScriptTerrainCoreTest {
         int open = Integer.parseInt(ids[1]);
         GameMap map = scenario.getGame().getMap();
 
-        Assertions.assertTrue(scenario.getGame().getMapTileChanges().hasPendingChanges());
-
-        scenario.stepFrame();
-
-        Assertions.assertFalse(scenario.getGame().getMapTileChanges().hasPendingChanges());
-
         for (int[] tile : SET_TILES) {
             Assertions.assertEquals(blocked, map.getTerrainTileIdentifier(tile[1] * map.getWidth() + tile[0]));
             Assertions.assertEquals(0, map.getTileFlags(tile[0], tile[1]) & MapTileFlags.WALKABLE);
@@ -105,6 +99,7 @@ final class ScriptTerrainCoreTest {
                                                                                                               }
                                                                                                               function onStart() {
                                                                                                                   var value = core.terrain.getTile(0, 0);
+                                                                                                                  var next = core.terrain.getTile(1, 0);
                                                                                                                   var missing = core.terrain.getTileGroupCount() * 16;
                                                                                                                   var small = game.map.locations.get(3);
                                                                                                                   var large = game.map.locations.get(4);
@@ -119,11 +114,20 @@ final class ScriptTerrainCoreTest {
                                                                                                                            errorOf(function () { game.map.terrain.setTile(0, 0, value); }),
                                                                                                                            errorOf(function () { game.map.terrain.copyTiles(small, large); }),
                                                                                                                            core.terrain.isValidTile(-1), core.terrain.isValidTile(value));
+                                                                                                                  log.info(value, next);
                                                                                                               }
                                                                                                               """);
 
-        Assertions.assertEquals(List.of("RangeError RangeError RangeError RangeError RangeError RangeError TypeError RangeError false true"),
-                                scenario.getInfoMessages(), scenario.getLines()::toString);
-        Assertions.assertFalse(scenario.getGame().getMapTileChanges().hasPendingChanges());
+        List<String> messages = scenario.getInfoMessages();
+
+        Assertions.assertEquals(2, messages.size(), scenario.getLines()::toString);
+        Assertions.assertEquals("RangeError RangeError RangeError RangeError RangeError RangeError TypeError RangeError false true", messages.getFirst());
+
+        scenario.stepFrame();
+
+        String[] tiles = messages.get(1).split(" ");
+
+        Assertions.assertEquals(Integer.parseInt(tiles[0]), scenario.getGame().getMap().getTerrainTileIdentifier(0), "a refused change queues nothing");
+        Assertions.assertEquals(Integer.parseInt(tiles[1]), scenario.getGame().getMap().getTerrainTileIdentifier(1));
     }
 }

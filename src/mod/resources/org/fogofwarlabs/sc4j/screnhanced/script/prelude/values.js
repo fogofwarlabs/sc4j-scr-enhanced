@@ -137,7 +137,7 @@
     };
 
     // Adds get(id), null for an id outside the table, and getCount() to a constant table and freezes it.
-    function defineTableFunctions(table, constants, count) {
+    function defineTableFunctions(table, constants) {
         defineProperty(table, 'get', {
             value: function (id) {
                 var constant = constants[id];
@@ -147,15 +147,17 @@
         });
         defineProperty(table, 'getCount', {
             value: function () {
-                return count;
+                return constants.length;
             }
         });
 
         return freeze(table);
     }
 
-    // Creates the constants of a type namespace of core: one object per id under the identifier of its name, get(id) and getCount().
-    function createTypeTable(namespace, prototype) {
+    // Creates the constants of a type namespace of core: one object per id under the identifier of its name, get(id) and getCount(). The
+    // optional createMembers(add) returns further members of the table; add(id) makes the object of a type the namespace registered after the
+    // table was made, which get(id) and getCount() then include.
+    function createTypeTable(namespace, prototype, createMembers) {
         var count = namespace.getCount();
         var types = [];
         var table = {};
@@ -167,7 +169,21 @@
             table[toIdentifier(type.name)] = type;
         }
 
-        return defineTableFunctions(table, types, count);
+        if (createMembers !== undefined) {
+            var members = createMembers(function (newId) {
+                var added = freeze(createObject(prototype, {id: newId, name: namespace.getName(newId)}));
+
+                types[newId] = added;
+
+                return added;
+            });
+
+            for (var name in members) {
+                defineProperty(table, name, {value: members[name]});
+            }
+        }
+
+        return defineTableFunctions(table, types);
     }
 
     // Creates the constants of ids from 0 to count - 1: one object per id, under its name when it has one, get(id) and getCount().
@@ -186,7 +202,7 @@
             }
         }
 
-        return defineTableFunctions(table, constants, count);
+        return defineTableFunctions(table, constants);
     }
 
     // The prototype of the positions: an x and a y in map pixels.

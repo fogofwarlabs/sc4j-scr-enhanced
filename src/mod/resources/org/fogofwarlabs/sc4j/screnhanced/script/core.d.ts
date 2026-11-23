@@ -2759,6 +2759,14 @@ interface CoreSprite {
      * @returns {@code false} for a sprite of no sprite effect, such as that of a unit or a bullet
      */
     remove(sprite: number): boolean;
+
+    /**
+     * Requests an iscript animation on every image of the sprite of a sprite effect, as the game requests one. Shared code only.
+     *
+     * @param animation the animation, 1 (Death) to 27 (Enable); Init throws a RangeError
+     * @throws TypeError for the sprite of no sprite effect, such as that of a unit or a bullet
+     */
+    playAnimation(sprite: number, animation: number): void;
 }
 
 /**
@@ -2949,15 +2957,28 @@ interface CoreBullet {
 
     /**
      * Runs the bullet creation of the game at the map position for a live unit, which aims the bullet at its order target unit, else its order
-     * target position. Shared code only.
+     * target position, with the weapon's flingy type and the unit's direction; the optional arguments, all or none, give them instead. Shared
+     * code only.
      *
      * @param weapon the weapons.dat entry
      * @param source the live unit that fires
      * @param x      the x in map pixels, inside the map
      * @param y      the y in map pixels, inside the map
+     * @param targetUnit a live unit the bullet targets, -1 for none
+     * @param targetX    the x of the target position in map pixels when there is no target unit, -1 for the source's order target
+     * @param targetY    the y of the target position in map pixels when there is no target unit
+     * @param flingy     the flingy type, registered ones included, -1 for the weapon's
+     * @param direction  the start direction, 0 to 255, -1 for the source's
      * @returns the bullet, or -1 when the game creates none (no free entry, no sprite, an attack the unit cannot make)
      */
-    create(weapon: number, source: number, x: number, y: number): number;
+    create(weapon: number, source: number, x: number, y: number, targetUnit?: number, targetX?: number, targetY?: number, flingy?: number,
+           direction?: number): number;
+
+    /**
+     * Ends a bullet as it ends at its target: it starts dying and its Death animation applies the weapon at once. A dying bullet stays as it
+     * is. Shared code only.
+     */
+    detonate(bullet: number): void;
 }
 
 /**
@@ -3191,9 +3212,71 @@ interface CoreTypes {
 }
 
 /**
- * The image types ({@code core.imageType}) with their shared HD anims and damage overlays.
+ * The sprite types ({@code core.spriteType}) and the sprite types a script registers.
+ */
+interface CoreSpriteTypes extends CoreTypes {
+    /**
+     * Registers a sprite type in the next reserved sprites.dat entry. Shared code only, at the module top level or in onStart.
+     *
+     * @param image                 the image type of the main image
+     * @param name                  the name, or null for "Sprite" and the id
+     * @param selectionCircle       the selection circle size, 0 to 9
+     * @param selectionCircleOffset the vertical offset of the selection circle, 0 to 255
+     * @param healthBarWidth        the health bar width, 0 to 255
+     * @param visible               the Is Visible value
+     * @returns the sprite type id
+     * @throws TypeError outside the registration or in local code; RangeError when every reserved entry is taken or a value is outside its range
+     */
+    create(image: number, name: string | null, selectionCircle: number, selectionCircleOffset: number, healthBarWidth: number,
+           visible: boolean): number;
+}
+
+/**
+ * The flingy types ({@code core.flingyType}) and the flingy types a script registers.
+ */
+interface CoreFlingyTypes extends CoreTypes {
+    /**
+     * Registers a flingy type in the next reserved flingy.dat entry: the motion values of the base, then those given. Shared code only, at the
+     * module top level or in onStart.
+     *
+     * @param sprite          the sprite type
+     * @param name            the name, or null for "Flingy" and the id
+     * @param base            the flingy type whose motion values are copied, -1 for flingy type 0
+     * @param topSpeed        the top speed, -1 for the base's
+     * @param acceleration    the acceleration, 0 to 65535, -1 for the base's
+     * @param haltDistance    the halt distance, -1 for the base's
+     * @param turnRate        the turn rate, 0 to 255, -1 for the base's
+     * @param movementControl the movement control, 0 to 255, -1 for the base's
+     * @returns the flingy type id
+     * @throws TypeError outside the registration or in local code; RangeError when every reserved entry is taken or a value is outside its range
+     */
+    create(sprite: number, name: string | null, base: number, topSpeed: number, acceleration: number, haltDistance: number, turnRate: number,
+           movementControl: number): number;
+}
+
+/**
+ * The image types ({@code core.imageType}) with their shared HD anims and damage overlays, and the image types a script registers.
  */
 interface CoreImageTypes extends CoreTypes {
+    /**
+     * Registers an image type that draws a sheet in the next reserved images.dat entry. The game's frames of the type are the sheet's frames in
+     * the order of the frame sets, quantized from the map's resource bytes. Shared code only, at the module top level or in onStart.
+     *
+     * @param sheet              a sheet handle ({@link CoreResources.getSheet})
+     * @param name               the name, or null for "Image" and the id
+     * @param script             the generic script, 0 (Still) or 1 (Projectile), or -1 with an image type to copy
+     * @param scriptImageType    the image type whose iscript, draw function, color shift, flags and overlay files the type copies, or -1
+     * @param frameSets          the sheet's frame set for each frame set the script plays, or null for the sheet's own order
+     * @param drawFunction       the draw function, 0 to 17, or -1 for that of the script
+     * @param animationFrameSets frame sets every image of the type loops as presentation, or null for none
+     * @param animationFrameTime the game frames each of them is shown
+     * @returns the image type id
+     * @throws TypeError outside the registration, in local code or without reserved entries; RangeError when every reserved entry is taken or
+     * a value is outside its range
+     */
+    create(sheet: number, name: string | null, script: number, scriptImageType: number, frameSets: number[] | null, drawFunction: number,
+           animationFrameSets: number[] | null, animationFrameTime: number): number;
+
     /**
      * Returns the image type whose HD anim the image type draws (images.rel): the image type itself for one with its own anim and when
      * images.rel cannot be read.
@@ -3258,6 +3341,50 @@ interface CoreResources {
     getSound(name: string): number;
 
     /**
+     * Reads a PNG or DDS picture as a sheet of frames of one size, cut row by row from the top left; the same name and arguments return the same
+     * handle. The anims of a game's sheets take at most 128 MiB together.
+     *
+     * @param frameWidth  the frame width in picture pixels
+     * @param frameHeight the frame height in picture pixels
+     * @param frameCount  the frames, -1 for every whole frame
+     * @param directions  the frames of a frame set, 1 or 17
+     * @param scale       the picture pixels per map pixel, 1, 2 or 4
+     * @param anchorX     the anchor column in a frame, -1 for the frame center
+     * @param anchorY     the anchor row in a frame, -1 for the frame center
+     * @param teamColor   the name of a team color picture of the same size, or null
+     * @param shadow      the name of a shadow picture of the same size, or null
+     * @param sd          a GRP handle of SD frames of the sheet's frame count and canvas, or -1
+     * @returns the resource handle
+     * @throws RangeError if the layout does not fit the picture or the limits
+     */
+    getSheet(name: string, frameWidth: number, frameHeight: number, frameCount: number, directions: number, scale: number, anchorX: number,
+             anchorY: number, teamColor: string | null, shadow: string | null, sd: number): number;
+
+    /**
+     * @param sheet a sheet handle ({@link getSheet}); another handle or -1 throws a RangeError
+     * @returns the number of frames
+     */
+    getSheetFrameCount(sheet: number): number;
+
+    /**
+     * @param sheet a sheet handle ({@link getSheet}); another handle or -1 throws a RangeError
+     * @returns the frames of a frame set, 1 or 17
+     */
+    getSheetDirections(sheet: number): number;
+
+    /**
+     * @param sheet a sheet handle ({@link getSheet}); another handle or -1 throws a RangeError
+     * @returns the canvas width in map pixels
+     */
+    getSheetWidth(sheet: number): number;
+
+    /**
+     * @param sheet a sheet handle ({@link getSheet}); another handle or -1 throws a RangeError
+     * @returns the canvas height in map pixels
+     */
+    getSheetHeight(sheet: number): number;
+
+    /**
      * Reads a resource as UTF-8 text, a leading byte order mark left out; bytes that are no UTF-8 throw an Error. The text is decoded once.
      *
      * @returns the text
@@ -3282,7 +3409,8 @@ interface CoreResources {
  * replaces on every player's game, local code on this machine only. The graphics are three handles of {@link CoreResources}, each -1 for none:
  * at least one is given, the HD anim has asset scale 4 and the HD2 anim 2, else a RangeError is thrown. The classic graphics draw the GRP, else
  * the installed GRP; HD draws the HD anim, else the HD2 anim; HD2 draws the HD2 anim, else the HD anim at half size; without an anim both draw
- * the GRP. A replacement wins over the GRP and anim pointers that EUD writes give the image.
+ * the GRP. A replacement wins over the GRP and anim pointers that EUD writes give the image. A sheet handle ({@link CoreResources.getSheet}) in
+ * place of the GRP, with both anims -1, replaces with the sheet's GRP and its anim built when first drawn.
  */
 interface CoreGraphics {
     /**
@@ -3341,6 +3469,24 @@ interface CoreGraphics {
      * @param drawFunction the draw function, 0 to 17 ({@link DrawFunction}), or -1 to draw with the image's own again
      */
     setImageDrawFunction(image: number, drawFunction: number): void;
+
+    /**
+     * Shows frame sets of one image one after another, each for a number of game frames from the call, then its own frame and graphics again.
+     * The image's direction is added to each frame set of turning graphics. A frame set or held frame ends the play.
+     *
+     * @param frameSets the frame sets, none negative
+     * @param frameTime the game frames each is shown, at least 1
+     * @param loop      whether the frame sets start over until {@link stopPlayingImage}
+     * @param grp       the GRP or sheet handle of the graphics shown, -1 with both anims -1 for the image's own
+     * @param hdAnim    the HD anim handle, -1 for none
+     * @param hd2Anim   the HD2 anim handle, -1 for none
+     */
+    playImage(image: number, frameSets: number[], frameTime: number, loop: boolean, grp: number, hdAnim: number, hd2Anim: number): void;
+
+    /**
+     * Ends the play of one image at once.
+     */
+    stopPlayingImage(image: number): void;
 }
 
 /**
@@ -4191,9 +4337,9 @@ interface Core {
     /** The names of the weapon types. */
     readonly weaponType: CoreTypes;
     /** The names of the flingy types. */
-    readonly flingyType: CoreTypes;
+    readonly flingyType: CoreFlingyTypes;
     /** The names of the sprite types. */
-    readonly spriteType: CoreTypes;
+    readonly spriteType: CoreSpriteTypes;
     /** The names of the image types, their anim image types and damage overlays. */
     readonly imageType: CoreImageTypes;
     /** The names of the upgrade types. */

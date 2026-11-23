@@ -1,5 +1,7 @@
 package org.fogofwarlabs.sc4j.screnhanced.graphics;
 
+import org.fogofwarlabs.sc4j.engine.resource.graphics.Picture;
+import org.fogofwarlabs.sc4j.engine.resource.graphics.PixelLayer;
 import org.fogofwarlabs.sc4j.engine.resource.graphics.SpriteSheet;
 import org.fogofwarlabs.sc4j.scr.game.sprite.Sprite;
 import org.fogofwarlabs.sc4j.scr.game.sprite.SpriteImage;
@@ -11,10 +13,12 @@ import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.util.Arrays;
 
 /**
  * Tests the image graphics a script replaces: GRPs and anims read from byte ranges and checked, the HD and HD2 rule of the graphics, the
- * graphics of an image type and of one unit's images, the unit's subunit, and the end of a unit's graphics when its slot is freed.
+ * graphics of an image type and of one unit's images, the unit's subunit, the end of a unit's graphics when its slot is freed, the frame sets an
+ * image plays and an image type loops, and the shadow of a main image that draws a sheet.
  */
 final class ImageReplacementsTest {
     private static final int UNIT_POOL_CAPACITY = 8;
@@ -34,6 +38,12 @@ final class ImageReplacementsTest {
      */
     private static final int SECOND_FRAME_DATA_OFFSET = 18;
     private static final int OUTSIDE_ADDRESS = 1000;
+    private static final int IMAGE_TYPE_COUNT = 1000;
+    private static final int PLAY_START = 10;
+    private static final int FRAME_TIME = 3;
+    private static final int DIRECTION = 3;
+    private static final int TURNING_DIRECTIONS = 17;
+    private static final int PALETTE_SIZE = 1024;
 
     private static @NotNull Unit allocateUnit(@NotNull UnitPool pool, int index, int generation) {
         pool.markLoaded(index, generation, 0, 0, 0, 0);
@@ -62,6 +72,136 @@ final class ImageReplacementsTest {
         byte[] grp = ImageFileScenario.createGrp(0);
 
         return ImageGraphics.of(replacements.readGrp(grp, 0, grp.length, "unit.grp"), null, null);
+    }
+
+    /**
+     * Creates the graphics of a one-frame sheet of a red square with a shadow picture.
+     */
+    private static @NotNull ImageGraphics createSheetGraphics(@NotNull ImageReplacements replacements) throws IOException {
+        int[] colors = new int[4 * 4];
+
+        Arrays.fill(colors, 0xFFFF0000);
+
+        Picture picture = new Picture(4, 4, PixelLayer.ofRgba(colors));
+        PictureSheet sheet = PictureSheet.create("square.png", picture, SheetLayout.create(4, 4, 4, 4, 1, 1, 1, SheetLayout.NO_ANCHOR,
+                                                                                           SheetLayout.NO_ANCHOR), null, picture, null);
+        PictureSheetConverter converter = new PictureSheetConverter(new byte[PALETTE_SIZE]);
+        int[] frames = {0};
+
+        return replacements.createSheetGraphics(sheet, frames, converter.createGrp(sheet, frames), converter.createShadowGrp(sheet, frames));
+    }
+
+    @Test
+    void play_image_should_draw_frame_sets_by_game_frame_until_they_end() throws IOException {
+        UnitPool pool = new UnitPool(UNIT_POOL_CAPACITY);
+        SpriteImagePool images = new SpriteImagePool(IMAGE_POOL_CAPACITY);
+        int[] frame = {PLAY_START};
+        ImageReplacements replacements = new ImageReplacements(() -> pool, () -> frame[0], IMAGE_TYPE_COUNT, imageType -> imageType == IMAGE_TYPE);
+        Unit unit = allocateUnit(pool, UNIT_INDEX, GENERATION);
+        SpriteImage turning = addImage(images, unit, IMAGE_TYPE);
+        SpriteImage still = addImage(images, unit, OTHER_IMAGE_TYPE);
+        ImageGraphics graphics = createGraphics(replacements);
+
+        turning.setFrameIndexOffset(DIRECTION);
+        replacements.playImage(turning, new int[]{2, 5}, FRAME_TIME, false, null);
+        replacements.playImage(still, new int[]{2, 5}, FRAME_TIME, true, graphics);
+
+        Assertions.assertEquals(2 * TURNING_DIRECTIONS + DIRECTION, replacements.findImageFrame(turning), "a turning image adds its direction");
+        Assertions.assertEquals(2, replacements.findImageFrame(still));
+        Assertions.assertSame(graphics, replacements.findGraphics(still), "the play's graphics are drawn meanwhile");
+
+        frame[0] = PLAY_START + FRAME_TIME;
+
+        Assertions.assertEquals(5 * TURNING_DIRECTIONS + DIRECTION, replacements.findImageFrame(turning));
+
+        frame[0] = PLAY_START + FRAME_TIME * 2;
+
+        Assertions.assertEquals(-1, replacements.findImageFrame(turning), "an ended play draws the image's own frame");
+        Assertions.assertEquals(2, replacements.findImageFrame(still), "a looping play starts over");
+
+        replacements.stopPlayingImage(still);
+        replacements.removeFreedUnits();
+
+        Assertions.assertEquals(-1, replacements.findImageFrame(still));
+        Assertions.assertNull(replacements.findGraphics(still), "a stopped play draws the image's own graphics");
+        Assertions.assertThrows(IllegalArgumentException.class, () -> replacements.playImage(still, new int[0], 1, false, null));
+        Assertions.assertThrows(IllegalArgumentException.class, () -> replacements.playImage(still, new int[]{1}, 0, false, null));
+    }
+
+    @Test
+    void set_image_frame_should_end_a_play_and_a_play_should_end_a_held_frame() {
+        UnitPool pool = new UnitPool(UNIT_POOL_CAPACITY);
+        SpriteImagePool images = new SpriteImagePool(IMAGE_POOL_CAPACITY);
+        ImageReplacements replacements = new ImageReplacements(() -> pool, () -> PLAY_START, IMAGE_TYPE_COUNT, imageType -> false);
+        SpriteImage image = addImage(images, allocateUnit(pool, UNIT_INDEX, GENERATION), IMAGE_TYPE);
+
+        replacements.playImage(image, new int[]{4}, FRAME_TIME, true, null);
+        replacements.setImageFrame(image, 7);
+
+        Assertions.assertEquals(7, replacements.findImageFrame(image));
+
+        replacements.holdImageFrame(image, 8);
+        replacements.playImage(image, new int[]{4}, FRAME_TIME, true, null);
+
+        Assertions.assertEquals(4, replacements.findImageFrame(image));
+
+        replacements.stopPlayingImage(image);
+
+        Assertions.assertEquals(-1, replacements.findImageFrame(image), "the play ended the held frame");
+    }
+
+    @Test
+    void set_type_animation_should_loop_frame_sets_for_every_image_of_the_type() {
+        UnitPool pool = new UnitPool(UNIT_POOL_CAPACITY);
+        SpriteImagePool images = new SpriteImagePool(IMAGE_POOL_CAPACITY);
+        int[] frame = {0};
+        ImageReplacements replacements = new ImageReplacements(() -> pool, () -> frame[0], IMAGE_TYPE_COUNT, imageType -> false);
+        SpriteImage image = addImage(images, allocateUnit(pool, UNIT_INDEX, GENERATION), IMAGE_TYPE);
+
+        replacements.setTypeAnimation(IMAGE_TYPE, new int[]{1, 2}, 4);
+
+        Assertions.assertEquals(1, replacements.findImageFrame(image));
+
+        frame[0] = 4;
+
+        Assertions.assertEquals(2, replacements.findImageFrame(image));
+
+        frame[0] = 8;
+
+        Assertions.assertEquals(1, replacements.findImageFrame(image));
+
+        replacements.setImageFrame(image, 6);
+
+        Assertions.assertEquals(6, replacements.findImageFrame(image), "an image's own frame override wins over the loop of its type");
+        Assertions.assertThrows(IllegalArgumentException.class, () -> replacements.setTypeAnimation(IMAGE_TYPE_COUNT, new int[]{1}, 1));
+    }
+
+    @Test
+    void find_graphics_should_draw_the_sheet_shadow_for_a_shadow_image_of_its_main_image() throws IOException {
+        UnitPool pool = new UnitPool(UNIT_POOL_CAPACITY);
+        SpriteImagePool images = new SpriteImagePool(IMAGE_POOL_CAPACITY);
+        ImageReplacements replacements = new ImageReplacements(() -> pool, () -> 0, IMAGE_TYPE_COUNT, imageType -> false);
+        Unit unit = allocateUnit(pool, UNIT_INDEX, GENERATION);
+        Sprite sprite = unit.getSpriteOrNull();
+        SpriteImage shadow = addImage(images, unit, OTHER_IMAGE_TYPE);
+        SpriteImage main = addImage(images, unit, IMAGE_TYPE);
+        ImageGraphics sheet = createSheetGraphics(replacements);
+
+        Assertions.assertNotNull(sprite);
+        Assertions.assertTrue(sheet.isSheet());
+        Assertions.assertNotNull(sheet.getShadow());
+
+        shadow.setModifier(SpriteImage.MODIFIER_SHADOW);
+        sprite.setMainImage(main);
+
+        Assertions.assertNull(replacements.findGraphics(shadow), "the shadow of installed graphics stays installed");
+
+        replacements.replaceImage(IMAGE_TYPE, sheet);
+        replacements.setImageFrame(main, 0);
+
+        Assertions.assertSame(sheet.getShadow(), replacements.findGraphics(shadow));
+        Assertions.assertEquals(0, replacements.findImageFrame(shadow), "the shadow draws the main image's frame");
+        Assertions.assertSame(sheet, replacements.findGraphics(main));
     }
 
     @Test

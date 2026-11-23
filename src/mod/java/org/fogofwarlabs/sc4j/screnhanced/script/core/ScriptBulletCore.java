@@ -37,13 +37,26 @@ import java.util.function.ToIntFunction;
  * {@code setTargetPosition(id, x, y)} (the center of the hit; the move target does not change) and {@code setRemainingTime(id, frames)} (a BYTE
  * that the move and damage-over-time states count down). {@code create(weapon, source, x, y)} runs the bullet creation of the game at a map
  * position for a live unit, which aims the bullet at its order target ({@link ProjectilePhase#create}): the new bullet, or {@code -1} when
- * the game creates none (no free entry, no sprite, an attack the unit cannot make).
+ * the game creates none (no free entry, no sprite, an attack the unit cannot make). {@code create(weapon, source, x, y, targetUnit, targetX,
+ * targetY, flingy, direction)} gives the inputs the bullet takes from its source otherwise: a target unit, else a target position when
+ * {@code targetX} is not {@code -1}, else the source's order target; a flingy type ({@code -1} for the weapon's, registered types included); a
+ * start direction from {@code 0} to {@code 255} ({@code -1} for the source's). {@code detonate(id)} ends a bullet as it ends at its target: it
+ * starts dying and its Death animation applies the weapon at once; a dying bullet stays as it is. It works in shared code only.
  */
 final class ScriptBulletCore {
     /**
      * The largest remaining time of a bullet, a BYTE.
      */
     private static final int MAXIMUM_REMAINING_TIME = 0xFF;
+    /**
+     * The largest direction of a bullet, a BYTE.
+     */
+    private static final int MAXIMUM_DIRECTION = 0xFF;
+    private static final int TARGET_UNIT_ARGUMENT = 4;
+    private static final int TARGET_X_ARGUMENT = 5;
+    private static final int TARGET_Y_ARGUMENT = 6;
+    private static final int FLINGY_ARGUMENT = 7;
+    private static final int DIRECTION_ARGUMENT = 8;
 
     private final @NotNull ScriptGame scriptGame;
     private final @NotNull ScriptUnitCore unitCore;
@@ -154,10 +167,60 @@ final class ScriptBulletCore {
             int x = this.readMapX(arguments, 2);
             int y = this.readMapY(arguments, 3);
             Game game = this.scriptGame.getGame();
-            ProjectilePhase.Bullet bullet = game.getProjectilePhase().create(source, weapon, x, y, this.scriptGame.getInstructionLimit());
+            ProjectilePhase.Bullet bullet;
+
+            if (arguments.length <= TARGET_UNIT_ARGUMENT) {
+                bullet = game.getProjectilePhase().create(source, weapon, x, y, this.scriptGame.getInstructionLimit());
+            } else {
+                bullet = this.createAimed(arguments, source, weapon, x, y);
+            }
 
             return (double) (bullet == null ? ScriptCoreUtils.NO_ID : bullet.getPoolIndex());
         });
+        ScriptCoreUtils.defineFunction(global, namespace, "detonate", 1, (context, scope, thisObject, arguments) -> {
+            this.scriptGame.checkWritable();
+
+            ProjectilePhase.Bullet bullet = this.readBullet(arguments, 0);
+
+            if (bullet.getSprite() != null) {
+                this.scriptGame.getGame().getProjectilePhase().detonate(bullet, this.scriptGame.getInstructionLimit());
+            }
+
+            return Context.getUndefinedValue();
+        });
+    }
+
+    /**
+     * Creates a bullet with the target, flingy type and direction arguments.
+     *
+     * @throws EcmaError if an argument is not an integer or outside its range
+     */
+    private ProjectilePhase.@Nullable Bullet createAimed(@NotNull Object @NotNull [] arguments, @NotNull Unit source, int weapon, int x, int y) {
+        Unit targetUnit = ScriptCoreUtils.readInteger(arguments, TARGET_UNIT_ARGUMENT) == ScriptCoreUtils.NO_ID
+                          ? null
+                          : this.unitCore.readUnit(arguments, TARGET_UNIT_ARGUMENT);
+        boolean position = ScriptCoreUtils.readInteger(arguments, TARGET_X_ARGUMENT) != ScriptCoreUtils.NO_ID;
+        int targetX = position ? this.readMapX(arguments, TARGET_X_ARGUMENT) : (short) source.getOrderTargetX();
+        int targetY = position ? this.readMapY(arguments, TARGET_Y_ARGUMENT) : (short) source.getOrderTargetY();
+        int flingy = ScriptCoreUtils.readInteger(arguments, FLINGY_ARGUMENT);
+        int direction = ScriptCoreUtils.readInteger(arguments, DIRECTION_ARGUMENT);
+
+        if (targetUnit == null && !position) {
+            targetUnit = source.getOrderTargetUnit();
+        }
+
+        if (flingy != ScriptCoreUtils.NO_ID) {
+            ScriptCoreUtils.requireId("flingy type", flingy, this.scriptGame.getContentCore().getFlingyTypeCount());
+        }
+
+        if (direction != ScriptCoreUtils.NO_ID) {
+            ScriptCoreUtils.requireId("direction", direction, MAXIMUM_DIRECTION + 1);
+        }
+
+        return this.scriptGame.getGame().getProjectilePhase().create(source, weapon, x, y, targetUnit, targetX, targetY,
+                                                                     flingy == ScriptCoreUtils.NO_ID ? ProjectilePhase.WEAPON_FLINGY : flingy,
+                                                                     direction == ScriptCoreUtils.NO_ID ? source.getHeading() : direction,
+                                                                     this.scriptGame.getInstructionLimit());
     }
 
     /**

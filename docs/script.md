@@ -561,6 +561,50 @@ Each `readJson` call returns a new value. Reading works in shared and local code
 - `unit.playAnimation(Animation.CastSpell)` plays an iscript animation as an order does, with the opcodes it has: an attack animation attacks the unit's target. A sprite in a section that must not be broken keeps its animation, and the unit's orders play their own animations again when their state changes. `Init` and `Death` are refused. Shared code only.
 - The selection circle, its vertical offset and the health bar width of a sprite type can be set: `spriteType.setSelectionCircle(size)` (0 to 9), `setSelectionCircleOffset(pixels)`, `setHealthBarWidth(pixels)`. A circle takes them when it is shown, a bar when it is drawn. Shared code only.
 
+#### Pictures as graphics
+
+`game.map.resources.getSheet(name, layout)` reads a PNG or DDS picture as frames of one size, row by row from the top left:
+
+```js
+const palm = game.map.resources.getSheet('trees/palm.png', {frameWidth: 96, frameHeight: 128, anchorY: 120, shadow: 'trees/palm-shadow.png'});
+```
+
+- `frameWidth`, `frameHeight`: the frame size in picture pixels. `frameCount`: every whole frame by default.
+- `directions: 17` for an image that turns: north, then clockwise to south; the west half is drawn mirrored.
+- `scale`: picture pixels per map pixel, 1 (SD size), 2 (HD2) or 4 (HD).
+- `anchorX`, `anchorY`: the pixel placed on the image position, the frame center by default. Sprites sort by their position, so an anchor at the foot of a tree draws units behind it when they stand north of the foot.
+- `teamColor`: a picture of the same size whose alpha says how strongly a pixel takes the owner's color. `shadow`: a picture of the same size whose alpha is the shadow.
+- `sd`: a GRP of the same frames, drawn in SD instead of the picture in the tileset palette.
+
+A sheet works where a GRP and anims do: `display.images.replace(type, {sheet: palm})`, `replaceUnit`, `image.replaceGraphics`. SD draws the frames in the map's tileset palette; HD and HD2 draw an anim built when the sheet is first drawn.
+
+`image.play({frameSets, frameTime, graphics, loop})` shows frame sets one after another, each for `frameTime` game frames, then the image's own frame again. The direction of a turning image is added. `image.stopPlaying()` ends it; `setFrame` and `holdFrame` end it too. It changes only what is drawn and works in shared and local code:
+
+```js
+hero.getSprite().getMainImage().play({graphics: {sheet: castSheet}, frameSets: [0, 1, 2], frameTime: 4});
+```
+
+#### Types of your own
+
+A map can register image, sprite and flingy types that draw its sheets. Register them at the module top level or in `onStart`, in shared code; the same calls give the same types in every game and replay.
+
+```js
+const palmImage = ImageType.create({sheet: palm, name: 'Palm'});
+const palmSprite = SpriteType.create({image: palmImage, name: 'Palm'});
+
+function onStart() {
+    game.map.resources.readJson('data/palms.json').forEach((point) => game.createEffect(palmSprite, Position.of(point.x, point.y)));
+}
+```
+
+- `ImageType.create({sheet, name, script, frameSets, animation, drawFunction})`: `script` is `ImageScript.Still` (frame 0 until Death), `ImageScript.Projectile` (a bullet) or an image type whose iscript, draw function, overlays and flags the new type copies. `frameSets` gives, for each frame set the script plays, the frame set of the sheet that draws it. `animation: {frameSets, frameTime}` loops frame sets for every image of the type, as presentation.
+- `SpriteType.create({image, name, selectionCircle, selectionCircleOffset, healthBarWidth, visible})`.
+- `FlingyType.create({sprite, name, base, topSpeed, acceleration, haltDistance, turnRate, movementControl})`: the motion values of `base`, then those given.
+- The game reads the frames of a registered image type: a sprite of the type gets the canvas of the sheet, which decides where it is seen and clicked.
+- An effect of a registered sprite type is a sprite like a spell's: it sorts with units, takes the fog of the tiles it covers, and shows a shadow when the sheet has one. `sprite.playAnimation(Animation.Death)` ends a `Still` sprite a frame later.
+- `UnitType.TerranMarine.setFlingyType(FlingyType.create({sprite, base: UnitType.TerranMarine.getFlingyType()}))` gives the units created afterwards the new look; with `script: ImageType.get(...)` they walk, attack and die as that image does. The portrait, wireframe and command icon stay those of the unit type.
+- `game.createBullet(weapon, source, position, {target, flingy, direction})` fires a bullet at a unit or a position with a flingy type of your own; `bullet.detonate()` ends it as it ends at its target, and its Death applies the weapon.
+
 ### 5.8 Sounds
 
 `display.sound.playAt(sound, position)` plays a sound of `sfxdata.dat` by its id, or a sound file of `resources/`:
@@ -611,5 +655,7 @@ SC4J.bat tool scr-enhanced script trace Protected.scx.sourcemap.json --log sc4j.
 - Globals: no `eval`, no `Function` from strings, no `Date`, no `setTimeout` or other timers, no Java access. `Math` gives the same results on every platform.
 - Instruction budget: each call into the script (loading, a frame, a decision, a local input, a local frame, a render) may run 5,000,000 interpreter instructions; function calls may nest 10,000 deep. Spread long work over frames with timers.
 - Script buttons: at most 256 per game.
+- Types of your own: 256 image types, 256 sprite types and 128 flingy types per game. A sheet's canvas is at most 255 by 255 map pixels, a picture at most 4096 by 4096 pixels, and the anims of a map's sheets at most 128 MiB.
+- Effects take sprite, image and effect slots that spells and dust use too; `createEffect` returns `null` when they are full.
 - Saved games: a game with a script cannot be saved.
 - Start units: as in StarCraft, a Use Map Settings game gives every player whose race in the map is User Selectable a town hall and four workers, with or without triggers, and keeps only the neutral preplaced units of those players. Set fixed races in the map, or remove the units in `onStart`.

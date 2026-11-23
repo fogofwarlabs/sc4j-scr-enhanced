@@ -2,6 +2,7 @@ package org.fogofwarlabs.sc4j.screnhanced.script.core;
 
 import org.fogofwarlabs.sc4j.scr.content.ScrUnitIds;
 import org.fogofwarlabs.sc4j.scr.core.LcgRandom;
+import org.fogofwarlabs.sc4j.scr.data.format.dat.SfxdataDat;
 import org.fogofwarlabs.sc4j.scr.game.presentation.SoundEvents;
 import org.fogofwarlabs.sc4j.scr.game.state.Game;
 import org.fogofwarlabs.sc4j.scr.game.terrain.GameMap;
@@ -20,7 +21,8 @@ import java.util.Map;
 
 /**
  * Tests {@code core.sound} and {@code display.sound} on a game without game data: a sound of shared code joins the game's sound events at once,
- * a sound of local code at the next frame start, a sound file of the resources as a file event, and the refusals.
+ * a sound of local code at the next frame start, a sound file of the resources as a sound id past the sound table that the runtime answers with
+ * the file, and the refusals.
  */
 final class ScriptSoundCoreTest {
     private static final int MAP_TILE_SIZE = 4;
@@ -97,7 +99,7 @@ final class ScriptSoundCoreTest {
         Assertions.assertEquals(SOUND_X, events.getPositionX(0));
         Assertions.assertEquals(SOUND_Y, events.getPositionY(0));
         Assertions.assertEquals(ScrUnitIds.NONE, events.getSourceUnitType(0));
-        Assertions.assertNull(events.getFile(0));
+        Assertions.assertNull(scenario.getRuntime().findSoundFile(SHARED_SOUND), "a sound of the table has no sound file");
 
         events.clear();
         scenario.getRuntime().callLocalFrame(1);
@@ -144,10 +146,12 @@ final class ScriptSoundCoreTest {
         Assertions.assertEquals(List.of("sounds/hit.wav true true", "Error", "Error", "RangeError", "RangeError", "TypeError"),
                                 scenario.getInfoMessages(), scenario.getLines()::toString);
         Assertions.assertEquals(1, events.getCount());
-        Assertions.assertEquals(SoundEvents.FILE_SOUND_ID, events.getSoundId(0));
-        Assertions.assertArrayEquals(wave, events.getFile(0));
+        Assertions.assertEquals(SfxdataDat.SOUND_COUNT, events.getSoundId(0), "the first sound file takes the first id past the sound table");
+        Assertions.assertArrayEquals(wave, scenario.getRuntime().findSoundFile(SfxdataDat.SOUND_COUNT));
+        Assertions.assertNull(scenario.getRuntime().findSoundFile(SfxdataDat.SOUND_COUNT + 1));
         Assertions.assertEquals(SOUND_X, events.getPositionX(0));
         Assertions.assertEquals(SOUND_Y, events.getPositionY(0));
+        Assertions.assertEquals(ScrUnitIds.NONE, events.getSourceUnitType(0));
 
         events.clear();
         scenario.getRuntime().callLocalFrame(1);
@@ -157,7 +161,7 @@ final class ScriptSoundCoreTest {
         scenario.getRuntime().playLocalSounds();
 
         Assertions.assertEquals(1, events.getCount());
-        Assertions.assertArrayEquals(wave, events.getFile(0));
+        Assertions.assertEquals(SfxdataDat.SOUND_COUNT, events.getSoundId(0), "a sound file keeps its sound id");
         Assertions.assertEquals(LOCAL_X, events.getPositionX(0));
         Assertions.assertEquals(LOCAL_Y, events.getPositionY(0));
     }

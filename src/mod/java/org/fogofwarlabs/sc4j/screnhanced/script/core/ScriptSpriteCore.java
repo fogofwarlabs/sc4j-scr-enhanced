@@ -1,14 +1,15 @@
 package org.fogofwarlabs.sc4j.screnhanced.script.core;
 
 import org.fogofwarlabs.sc4j.base.exception.Exceptions;
-import org.fogofwarlabs.sc4j.scr.data.format.dat.SpritesDat;
 import org.fogofwarlabs.sc4j.scr.data.format.terrain.TerrainTileset;
 import org.fogofwarlabs.sc4j.scr.game.player.PlayerTable;
 import org.fogofwarlabs.sc4j.scr.game.sprite.*;
+import org.fogofwarlabs.sc4j.scr.game.sprite.script.IscriptExecutor;
 import org.fogofwarlabs.sc4j.scr.game.state.Game;
 import org.fogofwarlabs.sc4j.scr.game.visibility.SpriteVisibility;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.mozilla.javascript.Context;
 import org.mozilla.javascript.EcmaError;
 import org.mozilla.javascript.ScriptRuntime;
 import org.mozilla.javascript.Scriptable;
@@ -35,7 +36,10 @@ import java.util.function.ToIntFunction;
  * sets its elevation and its visibility from the tile below it, as every native caller does; it returns the sprite or {@code -1} when the pools
  * are full. It works in shared code only. {@code remove(id)} removes the sprite of a sprite effect as the game retires a sprite: its images go
  * back to the image pool first, then the sprite to the sprite pool and its sprite effect to the effect pool. It returns {@code false} for a
- * sprite of no sprite effect, as a sprite of a unit or a bullet, and works in shared code only.
+ * sprite of no sprite effect, as a sprite of a unit or a bullet, and works in shared code only. {@code playAnimation(id, animation)} requests an
+ * iscript animation ({@code 1} Death to {@code 27} Enable) on every image of the sprite of a sprite effect, as the game requests one; Init
+ * throws a {@code RangeError}, the sprite of a unit or a bullet a {@code TypeError}. It works in shared code only. The sprite types of
+ * {@code createEffect} include the types the script registered ({@code core.spriteType.create}).
  * <p>
  * {@code core.image}: {@code getType} (the {@code images.dat} entry), {@code getSprite} ({@code -1} for none), {@code getFrame} (the drawn
  * frame), {@code getDirection} (the frame offset of the direction inside the frame group), {@code getDrawFunction}, {@code getFlags},
@@ -46,6 +50,10 @@ final class ScriptSpriteCore {
      * The largest elevation level of a sprite, a BYTE.
      */
     private static final int MAXIMUM_ELEVATION = 0xFF;
+    /**
+     * The animations of an iscript header, Init through Enable.
+     */
+    private static final int ANIMATION_COUNT = 28;
 
     private final @NotNull ScriptGame scriptGame;
 
@@ -117,7 +125,8 @@ final class ScriptSpriteCore {
             this.scriptGame.checkWritable();
 
             Game game = this.scriptGame.getGame();
-            int spriteType = ScriptCoreUtils.requireId("sprite type", ScriptCoreUtils.readInteger(arguments, 0), SpritesDat.SPRITE_COUNT);
+            int spriteType = ScriptCoreUtils.requireId("sprite type", ScriptCoreUtils.readInteger(arguments, 0),
+                                                       this.scriptGame.getContentCore().getSpriteTypeCount());
             int x = ScriptCoreUtils.requireId("x", ScriptCoreUtils.readInteger(arguments, 1), game.getMap().getWidth() * TerrainTileset.TILE_SIZE);
             int y = ScriptCoreUtils.requireId("y", ScriptCoreUtils.readInteger(arguments, 2), game.getMap().getHeight() * TerrainTileset.TILE_SIZE);
             int owner = ScriptCoreUtils.requireId("player", ScriptCoreUtils.readInteger(arguments, 3), PlayerTable.PLAYER_SLOTS);
@@ -140,6 +149,52 @@ final class ScriptSpriteCore {
 
             return this.removeEffect(this.readSprite(arguments, 0));
         });
+        ScriptCoreUtils.defineFunction(global, namespace, "playAnimation", 2, (context, scope, thisObject, arguments) -> {
+            this.scriptGame.checkWritable();
+
+            Sprite sprite = this.readSprite(arguments, 0);
+            int animation = ScriptCoreUtils.requireId("animation", ScriptCoreUtils.readInteger(arguments, 1), ANIMATION_COUNT);
+
+            if (animation == IscriptExecutor.ANIMATION_INIT) {
+                throw ScriptRuntime.rangeError("A sprite plays Init only when it is created.");
+            }
+
+            if (this.findEffect(sprite) == null) {
+                throw ScriptRuntime.typeError(Exceptions.format("The sprite {0} belongs to no effect: a unit or a bullet plays its own animations.",
+                                                                sprite.getPoolIndex()));
+            }
+
+            Game game = this.scriptGame.getGame();
+
+            game.getIscriptExecutor().runSpriteAnimation(sprite, null, animation, 0, this.scriptGame.getInstructionLimit());
+
+            return Context.getUndefinedValue();
+        });
+    }
+
+    /**
+     * Finds the sprite effect of a sprite, the startup sprite effect left out.
+     *
+     * @param sprite the sprite
+     * @return the sprite effect, or {@code null} if the sprite belongs to none
+     */
+    private @Nullable SpriteEffect findEffect(@NotNull Sprite sprite) {
+        SpriteSystem system = this.scriptGame.getGame().getSpriteSystem();
+        SpriteEffectPool effects = system.getSpriteEffectPool();
+
+        if (effects == null) {
+            return null;
+        }
+
+        for (int index = effects.getFirstActiveIndex(); index >= 0; index = effects.getNextIndex(index)) {
+            SpriteEffect effect = effects.getSpriteEffect(index);
+
+            if (effect.getSpriteOrNull() == sprite && effect != system.getStartupSpriteEffect()) {
+                return effect;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -152,35 +207,26 @@ final class ScriptSpriteCore {
     private boolean removeEffect(@NotNull Sprite sprite) {
         Game game = this.scriptGame.getGame();
         SpriteSystem system = game.getSpriteSystem();
+        SpriteEffect effect = this.findEffect(sprite);
         SpriteEffectPool effects = system.getSpriteEffectPool();
 
-        if (effects == null) {
+        if (effect == null || effects == null) {
             return false;
         }
 
-        for (int index = effects.getFirstActiveIndex(); index >= 0; index = effects.getNextIndex(index)) {
-            SpriteEffect effect = effects.getSpriteEffect(index);
-
-            if (effect.getSpriteOrNull() != sprite || effect == system.getStartupSpriteEffect()) {
-                continue;
-            }
-
-            for (SpriteImage image : sprite.getImages()) {
-                system.requireImagePool().recycle(image);
-            }
-
-            sprite.clearImages();
-
-            if (!system.requireSpritePool().recycleEmptySprite(sprite, game.getMap().getHeight())) {
-                throw Exceptions.newIllegalStateException("The sprite {0} could not leave its sprite row.", sprite.getPoolIndex());
-            }
-
-            effects.recycle(effect);
-
-            return true;
+        for (SpriteImage image : sprite.getImages()) {
+            system.requireImagePool().recycle(image);
         }
 
-        return false;
+        sprite.clearImages();
+
+        if (!system.requireSpritePool().recycleEmptySprite(sprite, game.getMap().getHeight())) {
+            throw Exceptions.newIllegalStateException("The sprite {0} could not leave its sprite row.", sprite.getPoolIndex());
+        }
+
+        effects.recycle(effect);
+
+        return true;
     }
 
     /**

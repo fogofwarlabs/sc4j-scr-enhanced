@@ -3940,12 +3940,13 @@ interface Game {
     getBullets(): Bullet[];
 
     /**
-     * Creates a bullet of a weapon at a position for a unit, aimed at the unit's order target unit, else its order target position, as the game
-     * creates one. Shared code only.
+     * Creates a bullet of a weapon at a position for a unit, as the game creates one: aimed at the unit's order target unit, else its order
+     * target position, with the weapon's flingy type and the unit's direction, unless the options give them. Shared code only.
      *
      * @returns the bullet, or null when the game creates none (no free entry, no sprite, an attack the unit cannot make)
+     * @throws RangeError if the direction is outside 0 to 255
      */
-    createBullet(weaponType: WeaponType, source: Unit, position: Position): Bullet | null;
+    createBullet(weaponType: WeaponType, source: Unit, position: Position, options?: BulletOptions): Bullet | null;
 
     /**
      * The map: its size, tileset, terrain, locations and resource files.
@@ -4071,6 +4072,55 @@ interface Sprite {
      * @returns false for a sprite of no effect, such as that of a unit or a bullet
      */
     remove(): boolean;
+
+    /**
+     * Plays an iscript animation on the images of the sprite of an effect, as the game does. Death ends a sprite of {@link ImageScript.Still}
+     * a frame later. Shared code only.
+     *
+     * @throws RangeError for Init
+     * @throws TypeError for the sprite of a unit (use {@link Unit.playAnimation}) or of a bullet (use {@link Bullet.detonate})
+     */
+    playAnimation(animation: Animation): void;
+}
+
+/**
+ * The options of {@link SpriteImage.play}.
+ */
+interface PlayOptions {
+    /**
+     * The frame sets shown one after another.
+     */
+    frameSets: number[];
+    /**
+     * The game frames each frame set is shown, 1 by default.
+     */
+    frameTime?: number;
+    /**
+     * The graphics shown meanwhile, the image's own by default.
+     */
+    graphics?: ImageGraphics;
+    /**
+     * Starts again after the last frame set until {@link SpriteImage.stopPlaying}, false by default.
+     */
+    loop?: boolean;
+}
+
+/**
+ * The options of {@link Game.createBullet}.
+ */
+interface BulletOptions {
+    /**
+     * The target unit or position, the source's order target by default.
+     */
+    target?: Unit | Position;
+    /**
+     * The flingy type the bullet moves and is drawn with, the weapon's by default.
+     */
+    flingy?: FlingyType;
+    /**
+     * The start direction, 0 to 255, the source's direction by default.
+     */
+    direction?: number;
 }
 
 /**
@@ -4158,6 +4208,21 @@ interface SpriteImage {
      * Restores the graphics of this image that {@link SpriteImage.replaceGraphics} replaced.
      */
     restoreGraphics(): void;
+
+    /**
+     * Shows frame sets of the image's graphics, or of other graphics, then its own frame and graphics again. The image's direction is added to
+     * each frame set of graphics that turn, mirrored as the image is. It changes only what is drawn; the image's iscript runs on. Timed in game
+     * frames from the call, so every game and replay shows the same frame. A frame set or held frame ({@link SpriteImage.setFrame},
+     * {@link SpriteImage.holdFrame}) ends the play.
+     *
+     * @throws RangeError if a frame set is negative or the frame time is below 1
+     */
+    play(options: PlayOptions): void;
+
+    /**
+     * Ends a play at once.
+     */
+    stopPlaying(): void;
 }
 
 /**
@@ -4248,6 +4313,12 @@ interface Bullet {
      * @returns the sprite, or null once its last image ended
      */
     getSprite(): Sprite | null;
+
+    /**
+     * Ends the bullet now as it ends at its target: it starts dying and its Death animation applies the weapon. A dying bullet stays as it is.
+     * Shared code only.
+     */
+    detonate(): void;
 }
 
 /**
@@ -4702,6 +4773,80 @@ interface Sound extends Resource {
 }
 
 /**
+ * The frame layout of a sheet ({@link Resources.getSheet}): frames of one size cut row by row from the top left of a picture.
+ */
+interface SheetLayout {
+    /**
+     * The frame width in picture pixels.
+     */
+    frameWidth: number;
+    /**
+     * The frame height in picture pixels.
+     */
+    frameHeight: number;
+    /**
+     * The frames, every whole frame of the picture by default.
+     */
+    frameCount?: number;
+    /**
+     * The frames of a frame set: 17 for an image that turns (north, then clockwise to south; the west half is drawn mirrored), 1 by default.
+     * The frame count is a multiple of it.
+     */
+    directions?: 1 | 17;
+    /**
+     * The picture pixels per map pixel: 1 (SD size), 2 (HD2) or 4 (HD); 1 by default. It divides the frame size.
+     */
+    scale?: 1 | 2 | 4;
+    /**
+     * The column of the pixel of a frame placed on the image position, in picture pixels; the frame center by default.
+     */
+    anchorX?: number;
+    /**
+     * The row of the pixel of a frame placed on the image position, in picture pixels; the frame center by default. Sprites sort by the y of
+     * their position, so an anchor at the foot of a tree draws units north of the foot behind it.
+     */
+    anchorY?: number;
+    /**
+     * A picture of the same size whose alpha says how strongly each pixel takes the owner's color.
+     */
+    teamColor?: string;
+    /**
+     * A picture of the same size whose alpha is the shadow of each frame, drawn below the image.
+     */
+    shadow?: string;
+    /**
+     * SD frames of the map that the SD graphics draw instead of the picture in the tileset palette: a GRP of the sheet's frame count and canvas.
+     */
+    sd?: Grp;
+}
+
+/**
+ * A PNG or DDS picture of the resource folder read as frames ({@link Resources.getSheet}). Its frames become a GRP in the tileset palette and an
+ * HD or HD2 anim: a scale 4 sheet an HD anim, a scale 2 or 1 sheet an HD2 anim.
+ */
+interface Sheet extends Resource {
+    /**
+     * @returns the number of frames
+     */
+    getFrameCount(): number;
+
+    /**
+     * @returns 17 for a sheet of turning frame sets, else 1
+     */
+    getDirections(): number;
+
+    /**
+     * @returns the canvas width in map pixels: the frame width over the scale, widened to keep the anchor at its center
+     */
+    getWidth(): number;
+
+    /**
+     * @returns the canvas height in map pixels, likewise
+     */
+    getHeight(): number;
+}
+
+/**
  * The files of the map's resource folder ({@link GameMap.resources}). A file is read once; later calls with the same name return the same
  * object. A missing file or one that is not valid for the kind throws an Error. Reading works in shared and local code.
  */
@@ -4737,6 +4882,18 @@ interface Resources {
     getImage(name: string): Image;
 
     /**
+     * Reads a PNG or DDS picture as a sheet of frames. The same name and layout return the same object. The anims of a map's sheets take at
+     * most 128 MiB together, one byte per texel and layer.
+     *
+     * @param name   the path relative to resources/
+     * @param layout the frame layout
+     * @returns the sheet
+     * @throws RangeError if the layout does not fit the picture, the canvas exceeds 255 by 255 map pixels, a picture exceeds 4096 by 4096
+     * pixels or the anims would exceed 128 MiB
+     */
+    getSheet(name: string, layout: SheetLayout): Sheet;
+
+    /**
      * Reads a sound: a RIFF WAVE of 8-bit, 16-bit or 24-bit PCM, mono or stereo, or an Ogg Vorbis file.
      *
      * @param name the path relative to resources/
@@ -4763,10 +4920,15 @@ interface Resources {
 }
 
 /**
- * Replacement graphics: an SD GRP, an HD anim and an HD2 anim, at least one of them. The classic graphics draw the GRP, else the installed GRP;
- * HD draws the HD anim, else the HD2 anim; HD2 draws the HD2 anim, else the HD anim at half size; without an anim HD and HD2 draw the GRP.
+ * Replacement graphics: an SD GRP, an HD anim and an HD2 anim, at least one of them, or a sheet alone. The classic graphics draw the GRP, else the
+ * installed GRP; HD draws the HD anim, else the HD2 anim; HD2 draws the HD2 anim, else the HD anim at half size; without an anim HD and HD2 draw
+ * the GRP. A sheet draws its GRP in the classic graphics and its anim, built when it is first drawn, in HD and HD2.
  */
 interface ImageGraphics {
+    /**
+     * A sheet instead of the GRP and the anims; it may not be given with them.
+     */
+    sheet?: Sheet | null;
     /**
      * The GRP of the SD graphics.
      */
@@ -7835,9 +7997,84 @@ interface ImageTypeNames {
 }
 
 /**
- * The image types of images.dat.
+ * The generic iscript scripts of the image types a script registers ({@link ImageTypeTable.create}).
  */
-declare const ImageType: ConstantTable<ImageType> & ImageTypeNames;
+interface ImageScript extends GameType {
+}
+
+/**
+ * The generic iscript scripts.
+ */
+interface ImageScriptTable extends ConstantTable<ImageScript> {
+    /**
+     * Shows frame 0 until the sprite plays Death, which ends it a frame later. With a sheet that has a shadow picture it also creates a shadow
+     * image below.
+     */
+    readonly Still: ImageScript;
+    /**
+     * The shape of a native bullet script: shows frame 0 and starts the bullet's move a frame later; its Death applies the weapon and ends it a
+     * frame later.
+     */
+    readonly Projectile: ImageScript;
+}
+
+/**
+ * The generic iscript scripts.
+ */
+declare const ImageScript: ImageScriptTable;
+
+/**
+ * The options of {@link ImageTypeTable.create}.
+ */
+interface ImageTypeOptions {
+    /**
+     * The graphics.
+     */
+    sheet: Sheet;
+    /**
+     * The name of the type, "Image" and the id by default.
+     */
+    name?: string;
+    /**
+     * The iscript: a generic script, {@link ImageScript.Still} by default, or an image type whose iscript, draw function, color shift, overlay
+     * files and flags the type copies, so it animates, attacks and overlays as that image type does.
+     */
+    script?: ImageScript | ImageType;
+    /**
+     * For each frame set the script plays, the frame set of the sheet that draws it; the sheet's own order by default. A sheet with fewer frame
+     * sets can follow a native script this way.
+     */
+    frameSets?: number[];
+    /**
+     * A loop of frame sets shown for every image of the type that shows its own frame, timed from game frame 0; none by default. It changes
+     * only what is drawn.
+     */
+    animation?: { frameSets: number[]; frameTime?: number };
+    /**
+     * The draw function, that of the script by default, {@link DrawFunction.Normal} for a generic script.
+     */
+    drawFunction?: DrawFunction;
+}
+
+/**
+ * The registration of image types ({@link ImageType}).
+ */
+interface ImageTypeTable {
+    /**
+     * Registers an image type that draws a sheet. The game reads its frames, so a sprite of the type gets the canvas of the sheet. Shared code
+     * only, at the module top level or in onStart: the same calls in the same order give the same ids in every game and replay.
+     *
+     * @returns the new image type
+     * @throws TypeError outside the module top level and onStart, in local code, or in a game without reserved types
+     * @throws RangeError when every one of the 256 image types a map may register is taken
+     */
+    create(options: ImageTypeOptions): ImageType;
+}
+
+/**
+ * The image types of images.dat, and those the script registered.
+ */
+declare const ImageType: ConstantTable<ImageType> & ImageTypeNames & ImageTypeTable;
 
 /**
  * The sprite types by the names of their image types; the names are known when the game starts.
@@ -7847,9 +8084,53 @@ interface SpriteTypeNames {
 }
 
 /**
- * The sprite types of sprites.dat.
+ * The options of {@link SpriteTypeTable.create}.
  */
-declare const SpriteType: ConstantTable<SpriteType> & SpriteTypeNames;
+interface SpriteTypeOptions {
+    /**
+     * The image type of the sprite's main image.
+     */
+    image: ImageType;
+    /**
+     * The name of the type, "Sprite" and the id by default.
+     */
+    name?: string;
+    /**
+     * The selection circle size, 0 to 9, 0 by default.
+     */
+    selectionCircle?: number;
+    /**
+     * The selection circle's vertical offset in pixels, 0 to 255, 0 by default.
+     */
+    selectionCircleOffset?: number;
+    /**
+     * The health bar width in pixels, 0 to 255; 0 (no bar) by default.
+     */
+    healthBarWidth?: number;
+    /**
+     * The sprites.dat Is Visible value, true by default.
+     */
+    visible?: boolean;
+}
+
+/**
+ * The registration of sprite types ({@link SpriteType}).
+ */
+interface SpriteTypeTable {
+    /**
+     * Registers a sprite type. Shared code only, as {@link ImageTypeTable.create}.
+     *
+     * @returns the new sprite type
+     * @throws TypeError outside the module top level and onStart, in local code, or in a game without reserved types
+     * @throws RangeError when every one of the 256 sprite types a map may register is taken, or a value is outside its range
+     */
+    create(options: SpriteTypeOptions): SpriteType;
+}
+
+/**
+ * The sprite types of sprites.dat, and those the script registered.
+ */
+declare const SpriteType: ConstantTable<SpriteType> & SpriteTypeNames & SpriteTypeTable;
 
 /**
  * The flingy types by the names of their sprite types; the names are known when the game starts.
@@ -7859,9 +8140,62 @@ interface FlingyTypeNames {
 }
 
 /**
- * The flingy types of flingy.dat.
+ * The options of {@link FlingyTypeTable.create}.
  */
-declare const FlingyType: ConstantTable<FlingyType> & FlingyTypeNames;
+interface FlingyTypeOptions {
+    /**
+     * The sprite type the flingy type draws.
+     */
+    sprite: SpriteType;
+    /**
+     * The name of the type, "Flingy" and the id by default.
+     */
+    name?: string;
+    /**
+     * The flingy type whose motion values the new type copies, the first flingy type by default.
+     */
+    base?: FlingyType;
+    /**
+     * The top speed, that of the base by default.
+     */
+    topSpeed?: number;
+    /**
+     * The acceleration, 0 to 65535, that of the base by default.
+     */
+    acceleration?: number;
+    /**
+     * The halt distance, that of the base by default.
+     */
+    haltDistance?: number;
+    /**
+     * The turn rate, 0 to 255, that of the base by default.
+     */
+    turnRate?: number;
+    /**
+     * The movement control, 0 to 255, that of the base by default.
+     */
+    movementControl?: number;
+}
+
+/**
+ * The registration of flingy types ({@link FlingyType}).
+ */
+interface FlingyTypeTable {
+    /**
+     * Registers a flingy type, which a unit type ({@link UnitTypeData.setFlingyType}) or a bullet ({@link BulletOptions.flingy}) takes. Shared
+     * code only, as {@link ImageTypeTable.create}.
+     *
+     * @returns the new flingy type
+     * @throws TypeError outside the module top level and onStart, in local code, or in a game without reserved types
+     * @throws RangeError when every one of the 128 flingy types a map may register is taken, or a value is outside its range
+     */
+    create(options: FlingyTypeOptions): FlingyType;
+}
+
+/**
+ * The flingy types of flingy.dat, and those the script registered.
+ */
+declare const FlingyType: ConstantTable<FlingyType> & FlingyTypeNames & FlingyTypeTable;
 
 /**
  * The unit types of units.dat, by the identifiers of their original names ("Terran Marine" is TerranMarine).

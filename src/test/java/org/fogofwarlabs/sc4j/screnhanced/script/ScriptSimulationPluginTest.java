@@ -34,8 +34,9 @@ import java.util.stream.Collectors;
 
 /**
  * Tests the script of a map with a script package in a live melee game, run by the game's {@link ScriptSimulationPlugin}: the start and
- * frame hooks, the frame hook while the script pauses the game, live and in the replay, the event hooks with their captured values and the
- * position of a death, the decision hooks that change damage, also of {@code applyDamage}, and reject orders, the read-only game in a decision
+ * frame hooks, the frame hook while the script pauses the game, live and in the replay, the map tile changes that move a unit at the frame
+ * start, live and in the replay, the event hooks with their captured values and the position of a death, the decision hooks that change
+ * damage, also of {@code applyDamage}, and reject orders, the read-only game in a decision
  * with its refused trigger writes and its local display, the channel messages of shared code and of the local hooks that the game's
  * {@link ScriptInputPlugin} calls, live and in the replay, the hooks of {@code defineHooks}, which play the game as top-level function hooks
  * do, protected too, and a map without a script package.
@@ -96,6 +97,15 @@ final class ScriptSimulationPluginTest {
     private static final int RESUMED_SWITCH = 2;
     private static final int PAUSE_RESUMED_FRAME = 4;
     private static final int PAUSE_FRAMES = 20;
+    /**
+     * The most frames the terrain test waits for its report, and the frames it plays after the report.
+     */
+    private static final int TERRAIN_FRAMES = 60;
+    private static final int TERRAIN_AFTER_FRAMES = 40;
+    /**
+     * The switch the terrain test script sets when the changed tiles moved the Marine.
+     */
+    private static final int TERRAIN_SWITCH = 3;
 
     private static @NotNull ScriptInputPlugin findInputPlugin(@NotNull Game game) {
         for (ScrGamePlugin plugin : game.getPlugins()) {
@@ -225,6 +235,61 @@ final class ScriptSimulationPluginTest {
         Assertions.assertTrue(triggers.isSwitchSet(PAUSED_SWITCH), "the replay pauses and runs the paused frames");
         Assertions.assertTrue(triggers.isSwitchSet(RESUMED_SWITCH));
         Assertions.assertEquals(0, triggers.getPhaseGate());
+    }
+
+    @Test
+    void terrain_changes_apply_at_the_frame_start_live_and_in_the_replay(@NotNull InstallationTestResources resources,
+                                                                         @TempDir @NotNull Path folder) throws IOException {
+        ScriptMapGameScenario scenario = ScriptMapGameScenario.startMelee(resources.getGameData(), folder, SPAWN_SCRIPT + """
+                                                                                                                          withoutZergling = true;
+                                                                                                                          var blocked, changeFrame, tileX, tileY;
+                                                                                                                          function findBlocked() {
+                                                                                                                              for (var y = 0; y < game.map.getTileHeight(); y++) {
+                                                                                                                                  for (var x = 0; x < game.map.getTileWidth(); x++) {
+                                                                                                                                      var tile = game.map.terrain.getTile(x, y);
+                                                                                                                                      if (!tile.isWalkable() && !tile.isPartiallyWalkable() && !tile.hasCreep()) {
+                                                                                                                                          return tile;
+                                                                                                                                      }
+                                                                                                                                  }
+                                                                                                                              }
+                                                                                                                              return null;
+                                                                                                                          }
+                                                                                                                          function afterSpawn(frame) {
+                                                                                                                              if (changeFrame === undefined && frame >= spawnFrame + 4) {
+                                                                                                                                  changeFrame = frame;
+                                                                                                                                  blocked = findBlocked();
+                                                                                                                                  tileX = Math.floor(marine.getX() / 32);
+                                                                                                                                  tileY = Math.floor(marine.getY() / 32);
+                                                                                                                                  for (var dy = -1; dy <= 1; dy++) {
+                                                                                                                                      for (var dx = -1; dx <= 1; dx++) {
+                                                                                                                                          game.map.terrain.setTile(tileX + dx, tileY + dy, blocked);
+                                                                                                                                      }
+                                                                                                                                  }
+                                                                                                                              } else if (changeFrame !== undefined && frame === changeFrame + 1) {
+                                                                                                                                  var moved = Math.floor(marine.getX() / 32) !== tileX || Math.floor(marine.getY() / 32) !== tileY;
+                                                                                                                                  game.switches.set(3, moved && game.map.terrain.getTile(tileX, tileY) === blocked);
+                                                                                                                                  game.print('ES terrain ' + moved + ' ' + (game.map.terrain.getTile(tileX, tileY) === blocked) + ' ' +
+                                                                                                                                             core.terrain.isTileWalkable(core.terrain.getTile(tileX, tileY)));
+                                                                                                                              }
+                                                                                                                          }
+                                                                                                                          """);
+
+        scenario.stepUntilPrinted("terrain", TERRAIN_FRAMES);
+        scenario.stepFrames(TERRAIN_AFTER_FRAMES);
+
+        Game live = scenario.getGame();
+
+        Assertions.assertEquals(List.of("terrain true true false"), scenario.getPrints(), "the changed tiles move the Marine at the frame start");
+
+        Game replayed = playReplay(resources, scenario.writeReplay(), live.getCurrentFrame());
+        TriggerContext triggers = replayed.getTriggerContext();
+
+        Assertions.assertNotNull(triggers);
+        Assertions.assertTrue(triggers.isSwitchSet(TERRAIN_SWITCH), "the replay moves the Marine at the same frame");
+
+        for (int tileIndex = 0; tileIndex < live.getMap().getTileCount(); tileIndex++) {
+            Assertions.assertEquals(live.getMap().getTerrainTileIdentifier(tileIndex), replayed.getMap().getTerrainTileIdentifier(tileIndex));
+        }
     }
 
     @Test

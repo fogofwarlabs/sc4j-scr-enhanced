@@ -12,6 +12,9 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * The HD graphics draw the HD anim, else the HD2 anim; the HD2 graphics draw the HD2 anim, else the HD anim at half size. Graphics without an
  * anim draw the GRP in the HD graphics too, and graphics without a GRP keep the installed GRP in the classic graphics.
+ * <p>
+ * Graphics made from a sheet ({@link PictureSheet}) know the frames of their frame sets and may carry the graphics of the sheet's shadow picture,
+ * which a shadow image of the same sprite draws ({@link ImageReplacements#findGraphics}).
  */
 public final class ImageGraphics implements ScrImageAnimation {
     /**
@@ -38,7 +41,20 @@ public final class ImageGraphics implements ScrImageAnimation {
                                                          hd2Anim.getScale());
         }
 
-        return new ImageGraphics(grp, hdAnim, hd2Anim);
+        return new ImageGraphics(grp, hdAnim, hd2Anim, 0, null);
+    }
+
+    /**
+     * Creates an {@link ImageGraphics} instance of graphics made from a sheet.
+     *
+     * @param grp        the GRP of the classic graphics
+     * @param anim       the HD or HD2 anim
+     * @param directions the frames of a frame set: {@code 1} or {@value SheetLayout#TURNING_DIRECTIONS}
+     * @param shadow     the graphics of the sheet's shadow picture, or {@code null} for none
+     * @return the created {@link ImageGraphics} instance
+     */
+    public static @NotNull ImageGraphics ofSheet(@NotNull ImageGrp grp, @NotNull ImageAnim anim, int directions, @Nullable ImageGraphics shadow) {
+        return new ImageGraphics(grp, anim.isHd() ? anim : null, anim.isHd() ? null : anim, directions, shadow);
     }
 
 
@@ -46,17 +62,26 @@ public final class ImageGraphics implements ScrImageAnimation {
     private final @Nullable ImageAnim hdAnim;
     private final @Nullable ImageAnim hd2Anim;
 
+    private final int directions;
+    private final @Nullable ImageGraphics shadow;
+
     /**
      * Creates an {@link ImageGraphics} instance.
      *
-     * @param grp     the GRP, or {@code null}
-     * @param hdAnim  the HD anim, or {@code null}
-     * @param hd2Anim the HD2 anim, or {@code null}
+     * @param grp        the GRP, or {@code null}
+     * @param hdAnim     the HD anim, or {@code null}
+     * @param hd2Anim    the HD2 anim, or {@code null}
+     * @param directions the frames of a frame set, or {@code 0} if they are not known
+     * @param shadow     the graphics of the shadow, or {@code null}
      */
-    private ImageGraphics(@Nullable ImageGrp grp, @Nullable ImageAnim hdAnim, @Nullable ImageAnim hd2Anim) {
+    private ImageGraphics(@Nullable ImageGrp grp, @Nullable ImageAnim hdAnim, @Nullable ImageAnim hd2Anim, int directions,
+                          @Nullable ImageGraphics shadow) {
         this.grp     = grp;
         this.hdAnim  = hdAnim;
         this.hd2Anim = hd2Anim;
+
+        this.directions = directions;
+        this.shadow     = shadow;
     }
 
     /**
@@ -78,6 +103,28 @@ public final class ImageGraphics implements ScrImageAnimation {
      */
     public @Nullable ImageAnim getHd2Anim() {
         return this.hd2Anim;
+    }
+
+    /**
+     * @return the frames of a frame set: {@code 1} or {@value SheetLayout#TURNING_DIRECTIONS} for graphics made from a sheet, {@code 0} for
+     * graphics of GRP and anim files, whose frame sets the image's {@code images.dat} Graphic Turns tells
+     */
+    public int getDirections() {
+        return this.directions;
+    }
+
+    /**
+     * @return the graphics of the shadow picture of the sheet the graphics are made from, or {@code null} for none
+     */
+    public @Nullable ImageGraphics getShadow() {
+        return this.shadow;
+    }
+
+    /**
+     * @return {@code true} if the graphics are made from a sheet, {@code false} otherwise
+     */
+    public boolean isSheet() {
+        return this.directions != 0;
     }
 
     /**

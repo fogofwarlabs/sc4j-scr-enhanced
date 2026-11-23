@@ -100,7 +100,7 @@ public final class ScriptInputPlugin implements ScrGamePlugin {
 
     /**
      * Called when the local player presses an enabled command card button in a running live game, by a mouse click or a hotkey, before the
-     * button's action runs; and when the local player targets a map point or unit with a script target button. The plugins see an input in
+     * button's action runs; and when the local player targets a map point or unit with a plugin target button. The plugins see an input in
      * extension order until one consumes it. A consumed press runs no action, a consumed target keeps the targeting mode.
      * <p>
      * The press goes to {@code onLocalButtonPressed}, the target to {@code onLocalButtonTargeted}, and the script buttons of
@@ -156,6 +156,22 @@ public final class ScriptInputPlugin implements ScrGamePlugin {
         ScriptRuntime scriptRuntime = this.runtime.get();
 
         return scriptRuntime == null ? null : scriptRuntime.findDrawList();
+    }
+
+    /**
+     * Finds the sound file a played sound event plays instead of its sound table entry: a WAVE or Ogg Vorbis file on the map sound channels, at
+     * the volume of its position. The same array is returned while the sound is unchanged.
+     * <p>
+     * The file is the sound file of {@code core.sound.playResourceAt} whose sound id the event plays.
+     *
+     * @param soundId the sound id of a played sound event
+     * @return the sound file, or {@code null} for the sound table entry
+     */
+    @Override
+    public byte @Nullable [] findSoundFile(int soundId) {
+        ScriptRuntime scriptRuntime = this.runtime.get();
+
+        return scriptRuntime == null ? null : scriptRuntime.findSoundFile(soundId);
     }
 
     /**

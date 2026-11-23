@@ -1,6 +1,7 @@
 package org.fogofwarlabs.sc4j.screnhanced.script.core;
 
 import org.fogofwarlabs.sc4j.base.exception.Exceptions;
+import org.fogofwarlabs.sc4j.scr.content.ScrImages;
 import org.fogofwarlabs.sc4j.scr.game.extension.ScrButtonInput;
 import org.fogofwarlabs.sc4j.scr.game.extension.ScrDrawList;
 import org.fogofwarlabs.sc4j.scr.game.extension.simulation.SimulationDecision;
@@ -9,12 +10,14 @@ import org.fogofwarlabs.sc4j.scr.game.frame.GameSpeed;
 import org.fogofwarlabs.sc4j.scr.game.map.MapStringSection;
 import org.fogofwarlabs.sc4j.scr.game.player.PlayerTable;
 import org.fogofwarlabs.sc4j.scr.game.state.Game;
+import org.fogofwarlabs.sc4j.scr.game.state.GameData;
 import org.fogofwarlabs.sc4j.scr.game.trigger.TriggerContext;
 import org.fogofwarlabs.sc4j.scr.game.trigger.TriggerModifiers;
 import org.fogofwarlabs.sc4j.scr.game.unit.Unit;
 import org.fogofwarlabs.sc4j.scr.game.unit.UnitPool;
 import org.fogofwarlabs.sc4j.screnhanced.graphics.ConsoleSettings;
 import org.fogofwarlabs.sc4j.screnhanced.graphics.ImageReplacements;
+import org.fogofwarlabs.sc4j.screnhanced.script.ScriptContentExtension;
 import org.fogofwarlabs.sc4j.screnhanced.script.ScriptResources;
 import org.fogofwarlabs.sc4j.screnhanced.script.input.ScriptButtonPress;
 import org.fogofwarlabs.sc4j.screnhanced.script.input.ScriptLocalInput;
@@ -102,7 +105,7 @@ public final class ScriptGame {
         new ScriptCombatCore(scriptGame).define(ScriptCoreUtils.createNamespace(context, global, core, "combat"), global);
         new ScriptAiCore(scriptGame).define(ScriptCoreUtils.createNamespace(context, global, core, "ai"), global);
         new ScriptRequirementCore(scriptGame, unitCore).define(ScriptCoreUtils.createNamespace(context, global, core, "requirements"), global);
-        ScriptTypeCore.define(context, scriptGame, core, global);
+        scriptGame.contentCore = ScriptTypeCore.define(context, scriptGame, graphicsCore, core, global);
         new ScriptDatCore(scriptGame).define(context, ScriptCoreUtils.createNamespace(context, global, core, "dat"), global);
         scriptGame.eventCore.define(ScriptCoreUtils.createNamespace(context, global, core, "events"), global);
         scriptGame.commandCore.define(ScriptCoreUtils.createNamespace(context, global, core, "command"), global);
@@ -145,12 +148,15 @@ public final class ScriptGame {
     private final @NotNull ScriptCommandCore commandCore;
     private final @NotNull ScriptLocalCore localCore;
     private final @NotNull ScriptSoundCore soundCore;
+    private final @NotNull ScriptTerrainChanges terrainChanges;
     private @Nullable ScriptScreenCore screenCore;
+    private @Nullable ScriptContentCore contentCore;
 
     private final @NotNull Map<String, Integer> registeredTexts;
 
     private boolean readOnly;
     private boolean local;
+    private boolean typeRegistration;
 
     /**
      * Creates a {@link ScriptGame} instance without image replacements, events, commands and registered texts, neither read-only nor local.
@@ -164,18 +170,36 @@ public final class ScriptGame {
         this.global = global;
         this.core   = core;
 
-        this.imageReplacements = new ImageReplacements(() -> game.getUnitSystem().getUnitPool());
+        this.imageReplacements = new ImageReplacements(() -> game.getUnitSystem().getUnitPool(), game::getCurrentFrame, countImageTypes(game),
+                                                       imageTypeId -> {
+                                                           GameData gameData = game.getGameData();
+
+                                                           return gameData != null && gameData.getImageTypes().getGraphicTurns(imageTypeId) != 0;
+                                                       });
         this.consoleSettings   = new ConsoleSettings();
         this.eventCore         = new ScriptEventCore(this);
         this.commandCore       = new ScriptCommandCore(this);
         this.localCore         = new ScriptLocalCore(this);
         this.soundCore         = new ScriptSoundCore(this);
+        this.terrainChanges    = new ScriptTerrainChanges(game);
         this.screenCore        = null;
+        this.contentCore       = null;
 
         this.registeredTexts = new HashMap<>();
 
-        this.readOnly = false;
-        this.local    = false;
+        this.readOnly         = false;
+        this.local            = false;
+        this.typeRegistration = false;
+    }
+
+    /**
+     * Counts the image types that may take graphics: the native ones and the entries {@link ScriptContentExtension} reserved.
+     */
+    private static int countImageTypes(@NotNull Game game) {
+        GameData gameData = game.getGameData();
+        ScriptContentExtension.Entries entries = gameData == null ? null : ScriptContentExtension.findEntries(gameData.getAddedGraphics());
+
+        return entries == null ? ScrImages.COUNT : entries.getFirstImage() + ScriptContentExtension.IMAGE_COUNT;
     }
 
     /**
@@ -183,6 +207,13 @@ public final class ScriptGame {
      */
     @NotNull Game getGame() {
         return this.game;
+    }
+
+    /**
+     * @return the map tile changes of {@code core.terrain}, the same instance for the whole game
+     */
+    @NotNull ScriptTerrainChanges getTerrainChanges() {
+        return this.terrainChanges;
     }
 
     /**
@@ -223,6 +254,16 @@ public final class ScriptGame {
     }
 
     /**
+     * Finds the sound file that a sound id of {@code core.sound.playResourceAt} plays.
+     *
+     * @param soundId the sound id of a played sound event
+     * @return the sound file, or {@code null} for a sound id that no sound file took
+     */
+    public byte @Nullable [] findSoundFile(int soundId) {
+        return this.soundCore.findSoundFile(soundId);
+    }
+
+    /**
      * Starts a render call: the drawing functions add to a new draw list until {@link #endRender(boolean)}.
      */
     public void beginRender() {
@@ -246,6 +287,36 @@ public final class ScriptGame {
         }
 
         return screen;
+    }
+
+    /**
+     * @return the registration of the image, sprite and flingy types
+     * @throws IllegalStateException if the type functions are not defined yet
+     */
+    @NotNull ScriptContentCore getContentCore() {
+        ScriptContentCore content = this.contentCore;
+
+        if (content == null) {
+            throw Exceptions.newIllegalStateException("The script game has no type functions.");
+        }
+
+        return content;
+    }
+
+    /**
+     * @return {@code true} while the script may register types ({@code core.imageType.create} and the others), {@code false} otherwise
+     */
+    public boolean isTypeRegistration() {
+        return this.typeRegistration;
+    }
+
+    /**
+     * Sets whether the script may register types: while the main script loads and while {@code onStart} runs, the same on every peer.
+     *
+     * @param typeRegistration {@code true} while the script may register types
+     */
+    public void setTypeRegistration(boolean typeRegistration) {
+        this.typeRegistration = typeRegistration;
     }
 
     /**
@@ -418,6 +489,17 @@ public final class ScriptGame {
      */
     public void playLocalSounds() {
         this.soundCore.playLocalSounds();
+    }
+
+    /**
+     * Applies the map tile changes the script queued ({@code core.terrain}): the tiles, the contours and regions, the paths and the ground units
+     * on terrain that no longer carries them. Nothing happens without a queued change.
+     *
+     * @throws IllegalStateException         if the tileset cannot be loaded
+     * @throws UnsupportedOperationException if the contours of the changed map cannot be built
+     */
+    public void applyTerrainChanges() {
+        this.terrainChanges.applyChanges(this.getInstructionLimit());
     }
 
     /**

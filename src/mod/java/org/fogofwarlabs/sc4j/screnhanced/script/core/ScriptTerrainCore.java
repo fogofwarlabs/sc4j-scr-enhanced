@@ -2,7 +2,6 @@ package org.fogofwarlabs.sc4j.screnhanced.script.core;
 
 import org.fogofwarlabs.sc4j.base.exception.Exceptions;
 import org.fogofwarlabs.sc4j.scr.data.format.terrain.TerrainTileset;
-import org.fogofwarlabs.sc4j.scr.game.map.MapTileChanges;
 import org.fogofwarlabs.sc4j.scr.game.state.Game;
 import org.fogofwarlabs.sc4j.scr.game.terrain.GameMap;
 import org.fogofwarlabs.sc4j.scr.game.terrain.MapTileFlags;
@@ -22,8 +21,8 @@ import java.io.IOException;
  * {@code getTileFlags(tileX, tileY)} reads the tile's flag DWORD as the game holds it now (the sight bits of {@code core.vision}, walkability,
  * creep, elevation and occupation, {@link MapTileFlags}); {@code hasCreep(tileX, tileY)} tests the creep flag of those flags, which the rules
  * of the game read (placement, larvae, spells) and the creep routines of {@code core.creep} set and clear;
- * {@code setTile(tileX, tileY, value)} queues a change, which the game applies at its next trigger step, after the simulation plugins' frame
- * start and before the triggers, as on a map that had the tile from the start ({@link MapTileChanges}); {@code getTileGroupCount()} is the
+ * {@code setTile(tileX, tileY, value)} queues a change, which the game applies at the end of the script's next frame start, before the
+ * triggers, as on a map that had the tile from the start ({@link ScriptTerrainChanges}); {@code getTileGroupCount()} is the
  * number of CV5 groups of the map's tileset and {@code isValidTile(value)} tells whether a value names a tile of it. The terrain a value gives
  * a tile:
  * {@code isTileWalkable(value)} (more than twelve of its sixteen mini-tiles are walkable), {@code isTilePartiallyWalkable(value)} (some but
@@ -125,8 +124,8 @@ final class ScriptTerrainCore {
                                        (context, scope, thisObject, arguments) -> (this.readFlags(arguments) & MapTileFlags.VERY_HIGH) != 0);
     }
 
-    private @NotNull MapTileChanges getChanges() {
-        return this.scriptGame.getGame().getMapTileChanges();
+    private @NotNull ScriptTerrainChanges getChanges() {
+        return this.scriptGame.getTerrainChanges();
     }
 
     private int readTileX(@NotNull Object @NotNull [] arguments, int index) {

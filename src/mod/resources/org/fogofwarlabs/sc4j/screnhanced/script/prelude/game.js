@@ -58,6 +58,8 @@
     var DamageType = prelude.DamageType;
     var drawFunctionPrototype = prelude.drawFunctionPrototype;
     var animationPrototype = prelude.animationPrototype;
+    var flingyTypePrototype = prelude.flingyTypePrototype;
+    var sheetPrototype = prelude.sheetPrototype;
 
     var create = Object.create;
     var freeze = Object.freeze;
@@ -1322,6 +1324,10 @@
 
             return (core.sprite.getVisibilityFlags(sprites.requireId(this)) & bit) !== 0;
         },
+        // Plays an iscript Animation on the images of the sprite of an effect, as the game does. Shared code only.
+        playAnimation: function (animation) {
+            core.sprite.playAnimation(sprites.requireId(this), requireObject(animation, animationPrototype, 'An animation').id);
+        },
         // Removes the sprite of an effect, its images first; false for a sprite of no effect, as that of a unit or a bullet. Shared code only.
         remove: function () {
             return core.sprite.remove(sprites.requireId(this));
@@ -1383,6 +1389,23 @@
         },
         restoreGraphics: function () {
             core.graphics.restoreImageGraphics(spriteImages.requireId(this));
+        },
+        // Shows frame sets {frameSets, frameTime, graphics, loop} timed in game frames from the call, then the image's own frame again; it
+        // changes only what is drawn.
+        play: function (options) {
+            var id = spriteImages.requireId(this);
+            var values = readOptions(options);
+            var ids = values.graphics === undefined || values.graphics === null ? [NONE, NONE, NONE] : readGraphicsIds(values.graphics);
+
+            if (!Array.isArray(values.frameSets)) {
+                throw new TypeError('The frame sets are an array, not ' + values.frameSets + '.');
+            }
+
+            core.graphics.playImage(id, values.frameSets, values.frameTime === undefined ? 1 : values.frameTime, values.loop === true, ids[0],
+                                    ids[1], ids[2]);
+        },
+        stopPlaying: function () {
+            core.graphics.stopPlayingImage(spriteImages.requireId(this));
         }
     };
 
@@ -1452,6 +1475,10 @@
         // The sprite, null once its last image ended.
         getSprite: function () {
             return sprites.get(core.bullet.getSprite(bullets.requireId(this)));
+        },
+        // Ends the bullet as it ends at its target: its Death animation applies the weapon at once. Shared code only.
+        detonate: function () {
+            core.bullet.detonate(bullets.requireId(this));
         }
     };
 
@@ -1566,10 +1593,20 @@
         return resource === undefined || resource === null ? NONE : requireObject(resource, prototype, kind).id;
     }
 
-    // Returns the handle ids of the graphics {sd, hd, hd2}: a GRP, an HD anim and an HD2 anim, each optional.
+    // Returns the handle ids of the graphics {sd, hd, hd2}: a GRP, an HD anim and an HD2 anim, each optional; or {sheet} alone, whose handle
+    // takes the place of the GRP.
     function readGraphicsIds(images) {
         if (images === null || typeof images !== 'object') {
-            throw new TypeError('The graphics {sd, hd, hd2} are needed, not ' + images + '.');
+            throw new TypeError('The graphics {sd, hd, hd2} or {sheet} are needed, not ' + images + '.');
+        }
+
+        if (images.sheet !== undefined && images.sheet !== null) {
+            if (images.sd !== undefined && images.sd !== null || images.hd !== undefined && images.hd !== null ||
+                images.hd2 !== undefined && images.hd2 !== null) {
+                throw new TypeError('A sheet is given without a GRP and anims.');
+            }
+
+            return [requireObject(images.sheet, sheetPrototype, 'A sheet').id, NONE, NONE];
         }
 
         return [readResourceId(images.sd, grpPrototype, 'A GRP'), readResourceId(images.hd, animPrototype, 'An anim'),
@@ -1585,6 +1622,11 @@
     imagePrototype.getHeight = function () {
         return core.resources.getImageHeight(this.id);
     };
+
+    // Returns an optional integer of a layout, NONE when it is missing.
+    function readLayoutValue(value) {
+        return value === undefined || value === null ? NONE : value;
+    }
 
     // Returns the object of a resource handle: one object per handle id.
     function getResource(id, name, prototype) {
@@ -1617,6 +1659,21 @@
                                    var text = String(name);
 
                                    return getResource(core.resources.getImage(text), text, imagePrototype);
+                               },
+                               // A PNG or DDS picture read as frames {frameWidth, frameHeight, frameCount, directions, scale, anchorX, anchorY,
+                               // teamColor, shadow, sd}: the same name and layout give the same sheet.
+                               getSheet: function (name, layout) {
+                                   var text = String(name);
+                                   var values = readOptions(layout);
+                                   var teamColor = values.teamColor === undefined || values.teamColor === null ? null : String(values.teamColor);
+                                   var shadow = values.shadow === undefined || values.shadow === null ? null : String(values.shadow);
+                                   var sd = values.sd === undefined || values.sd === null ? NONE : requireObject(values.sd, grpPrototype, 'A GRP').id;
+                                   var id = core.resources.getSheet(text, values.frameWidth, values.frameHeight, readLayoutValue(values.frameCount),
+                                                                    values.directions === undefined ? 1 : values.directions,
+                                                                    values.scale === undefined ? 1 : values.scale, readLayoutValue(values.anchorX),
+                                                                    readLayoutValue(values.anchorY), teamColor, shadow, sd);
+
+                                   return getResource(id, text, sheetPrototype);
                                },
                                // A WAVE or Ogg Vorbis sound to play at a position (display.sound.playAt).
                                getSound: function (name) {
@@ -2045,14 +2102,36 @@
                                   return bullets.get(id);
                               });
                           },
-                          // Creates a bullet of a WeaponType at a position for a unit, aimed at the unit's order target, as the game creates one: the
-                          // bullet, or null when the game creates none. Shared code only.
-                          createBullet: function (weaponType, source, position) {
+                          // Creates a bullet of a WeaponType at a position for a unit, as the game creates one: aimed at the unit's order target, or
+                          // {target: a Unit or a Position, flingy: a FlingyType, direction: 0 to 255}; the bullet, or null when the game creates none.
+                          // Shared code only.
+                          createBullet: function (weaponType, source, position, options) {
                               var weapon = requireObject(weaponType, weaponTypePrototype, 'A weapon type').id;
+                              var sourceId = requireUnitId(source);
 
                               requireObject(position, positionPrototype, 'A position');
 
-                              return bullets.get(core.bullet.create(weapon, requireUnitId(source), position.x, position.y));
+                              if (options === undefined) {
+                                  return bullets.get(core.bullet.create(weapon, sourceId, position.x, position.y));
+                              }
+
+                              var values = readOptions(options);
+                              var targetUnit = NONE;
+                              var targetX = NONE;
+                              var targetY = NONE;
+                              var flingy = values.flingy === undefined || values.flingy === null
+                                           ? NONE
+                                           : requireObject(values.flingy, flingyTypePrototype, 'A flingy type').id;
+
+                              if (isObjectOf(values.target, positionPrototype)) {
+                                  targetX = values.target.x;
+                                  targetY = values.target.y;
+                              } else if (values.target !== undefined && values.target !== null) {
+                                  targetUnit = requireUnitId(values.target);
+                              }
+
+                              return bullets.get(core.bullet.create(weapon, sourceId, position.x, position.y, targetUnit, targetX, targetY, flingy,
+                                                                    values.direction === undefined ? NONE : values.direction));
                           },
                           map: gameMap,
                           players: players,

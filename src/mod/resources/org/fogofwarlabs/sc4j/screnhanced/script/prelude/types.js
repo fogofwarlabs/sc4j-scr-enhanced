@@ -1,12 +1,15 @@
 // The type and value tables of the upper layer: the globals UnitType, WeaponType, FlingyType, SpriteType, ImageType, UpgradeType, TechType, Order,
 // Key, MouseButton, Modifier, UnitGroup, ScoreType, ResourceType, Alliance, EventKind, InputKind, DecisionKind, GameSpeed, Cheat, GameMode,
-// UnitSize, DamageType, LocationFlag, DrawFunction, BulletState and Animation. The DAT methods of the type objects come from the DAT tables
-// (prelude.datTables) over core.dat, with its raw values.
+// UnitSize, DamageType, LocationFlag, DrawFunction, BulletState, Animation and ImageScript. The DAT methods of the type objects come from the
+// DAT tables (prelude.datTables) over core.dat, with its raw values. ImageType, SpriteType and FlingyType register new types with create, in
+// shared code at the module top level or in onStart.
 (function (core, prelude) {
     'use strict';
 
     var NONE = prelude.NONE;
     var RAW_SCALE = prelude.RAW_SCALE;
+    var requireShared = prelude.requireShared;
+    var readOptions = prelude.readOptions;
     var createObject = prelude.createObject;
     var isObjectOf = prelude.isObjectOf;
     var requireObject = prelude.requireObject;
@@ -77,6 +80,10 @@
                            'GroundAttackToIdle', 'AirAttackToIdle', 'Unused2', 'Walking', 'WalkingToIdle', 'SpecialState1', 'SpecialState2',
                            'AlmostBuilt', 'Built', 'Landing', 'LiftOff', 'IsWorking', 'WorkingToIdle', 'WarpIn', 'Unused3', 'StarEditInit',
                            'Disable', 'Burrow', 'Unburrow', 'Enable'];
+    // The generic scripts of the image types a script registers, in the ids of core.imageType.create.
+    var IMAGE_SCRIPT_NAMES = ['Still', 'Projectile'];
+    // The game frames each frame set of a loop is shown when the loop gives none.
+    var DEFAULT_FRAME_TIME = 1;
 
     var unitTypePrototype = create(typePrototype);
     var weaponTypePrototype = create(typePrototype);
@@ -128,11 +135,112 @@
         core.strings.setStatText(this.id + 1, text === null || text === undefined ? null : String(text));
     };
 
+    var imageScriptPrototype = create(typePrototype);
+    // A picture of the map's resource folder read as frames (game.map.resources.getSheet), which ImageType.create takes: getId() is its resource
+    // handle, getName() its path.
+    var sheetPrototype = create(typePrototype);
+
+    // The frames of a sheet, the frames of its frame sets (17 for a sheet that turns) and its canvas in map pixels.
+    sheetPrototype.getFrameCount = function () {
+        return core.resources.getSheetFrameCount(this.id);
+    };
+    sheetPrototype.getDirections = function () {
+        return core.resources.getSheetDirections(this.id);
+    };
+    sheetPrototype.getWidth = function () {
+        return core.resources.getSheetWidth(this.id);
+    };
+    sheetPrototype.getHeight = function () {
+        return core.resources.getSheetHeight(this.id);
+    };
+    var ImageScript = createConstantTable(imageScriptPrototype, IMAGE_SCRIPT_NAMES, IMAGE_SCRIPT_NAMES.length, 'Script ');
+
+    // Returns an optional array of integers, null when it is missing.
+    function readOptionalArray(value, kind) {
+        if (value === undefined || value === null) {
+            return null;
+        }
+
+        if (!Array.isArray(value)) {
+            throw new TypeError(kind + ' are an array, not ' + value + '.');
+        }
+
+        return value;
+    }
+
+    // Returns an optional name as a string, null when it is missing.
+    function readName(name) {
+        return name === undefined || name === null ? null : String(name);
+    }
+
+    // Returns an optional number, NONE when it is missing.
+    function readOptionalNumber(value) {
+        return value === undefined || value === null ? NONE : value;
+    }
+
     var UnitType = createTypeTable(core.unitType, unitTypePrototype);
     var WeaponType = createTypeTable(core.weaponType, weaponTypePrototype);
-    var FlingyType = createTypeTable(core.flingyType, flingyTypePrototype);
-    var SpriteType = createTypeTable(core.spriteType, spriteTypePrototype);
-    var ImageType = createTypeTable(core.imageType, imageTypePrototype);
+    // Registers a flingy type: {sprite, name, base, topSpeed, acceleration, haltDistance, turnRate, movementControl}. Shared code only.
+    var FlingyType = createTypeTable(core.flingyType, flingyTypePrototype, function (add) {
+        return {
+            create: function (options) {
+                var values = readOptions(options);
+                var base = values.base === undefined || values.base === null ? NONE : requireObject(values.base, flingyTypePrototype, 'A flingy type').id;
+
+                requireShared('Local code cannot register a flingy type.');
+
+                return add(core.flingyType.create(requireObject(values.sprite, spriteTypePrototype, 'A sprite type').id, readName(values.name), base,
+                                                  readOptionalNumber(values.topSpeed), readOptionalNumber(values.acceleration),
+                                                  readOptionalNumber(values.haltDistance), readOptionalNumber(values.turnRate),
+                                                  readOptionalNumber(values.movementControl)));
+            }
+        };
+    });
+    // Registers a sprite type: {image, name, selectionCircle, selectionCircleOffset, healthBarWidth, visible}. Shared code only.
+    var SpriteType = createTypeTable(core.spriteType, spriteTypePrototype, function (add) {
+        return {
+            create: function (options) {
+                var values = readOptions(options);
+                var image = requireObject(values.image, imageTypePrototype, 'An image type').id;
+
+                requireShared('Local code cannot register a sprite type.');
+
+                return add(core.spriteType.create(image, readName(values.name), values.selectionCircle === undefined ? 0 : values.selectionCircle,
+                                                  values.selectionCircleOffset === undefined ? 0 : values.selectionCircleOffset,
+                                                  values.healthBarWidth === undefined ? 0 : values.healthBarWidth, values.visible !== false));
+            }
+        };
+    });
+    // Registers an image type that draws a Sheet: {sheet, name, script, frameSets, animation: {frameSets, frameTime}, drawFunction}. Shared code
+    // only.
+    var ImageType = createTypeTable(core.imageType, imageTypePrototype, function (add) {
+        return {
+            create: function (options) {
+                var values = readOptions(options);
+                var sheet = requireObject(values.sheet, sheetPrototype, 'A sheet');
+                var script = values.script === undefined || values.script === null ? ImageScript.Still : values.script;
+                var genericScript = NONE;
+                var scriptImageType = NONE;
+                var drawFunction = values.drawFunction === undefined || values.drawFunction === null
+                                   ? NONE
+                                   : requireObject(values.drawFunction, drawFunctionPrototype, 'A draw function').id;
+                var animation = values.animation === undefined || values.animation === null ? null : readOptions(values.animation);
+
+                if (isObjectOf(script, imageScriptPrototype)) {
+                    genericScript = script.id;
+                } else {
+                    scriptImageType = requireObject(script, imageTypePrototype, 'An image script or an image type').id;
+                }
+
+                requireShared('Local code cannot register an image type.');
+
+                return add(core.imageType.create(sheet.id, readName(values.name), genericScript, scriptImageType,
+                                                 readOptionalArray(values.frameSets, 'The frame sets'), drawFunction,
+                                                 animation === null ? null : readOptionalArray(animation.frameSets, 'The frame sets'),
+                                                 animation === null || animation.frameTime === undefined ? DEFAULT_FRAME_TIME : animation.frameTime));
+            }
+        };
+    });
     var UpgradeType = createTypeTable(core.upgradeType, upgradeTypePrototype);
     var TechType = createTypeTable(core.techType, techTypePrototype);
     var Order = createTypeTable(core.orderType, orderPrototype);
@@ -373,8 +481,8 @@
     [unitTypePrototype, weaponTypePrototype, flingyTypePrototype, spriteTypePrototype, imageTypePrototype, upgradeTypePrototype,
      techTypePrototype, orderPrototype, keyPrototype, mouseButtonPrototype, unitGroupPrototype, scoreTypePrototype, resourceTypePrototype,
      alliancePrototype, eventKindPrototype, inputKindPrototype, decisionKindPrototype, gameSpeedPrototype, cheatPrototype, gameModePrototype,
-     unitSizePrototype, damageTypePrototype, locationFlagPrototype, drawFunctionPrototype, bulletStatePrototype,
-     animationPrototype].forEach(freeze);
+     unitSizePrototype, damageTypePrototype, locationFlagPrototype, drawFunctionPrototype, bulletStatePrototype, animationPrototype,
+     imageScriptPrototype, sheetPrototype].forEach(freeze);
 
     return {
         exports: {
@@ -404,7 +512,8 @@
             LocationFlag: LocationFlag,
             DrawFunction: DrawFunction,
             BulletState: BulletState,
-            Animation: Animation
+            Animation: Animation,
+            ImageScript: ImageScript
         },
         shared: {
             GameSpeed: GameSpeed,
@@ -414,6 +523,8 @@
             drawFunctionPrototype: drawFunctionPrototype,
             animationPrototype: animationPrototype,
             spriteTypePrototype: spriteTypePrototype,
+            flingyTypePrototype: flingyTypePrototype,
+            sheetPrototype: sheetPrototype,
             weaponTypePrototype: weaponTypePrototype,
             damageTypePrototype: damageTypePrototype,
             unitTypePrototype: unitTypePrototype,

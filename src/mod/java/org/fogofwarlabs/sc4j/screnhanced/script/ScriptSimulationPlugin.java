@@ -89,8 +89,8 @@ public final class ScriptSimulationPlugin implements ScrSimulationPlugin, ImageR
      * Every call forgets the image replacements of units whose slot was freed; the first call starts the script; the first call, every call
      * whose frame number advanced and every call while Pause Game holds the game, when the triggers run without a frame, run the script's frame;
      * every call then runs the console code of the client's DevTools console ({@link ScriptInspector#onFrameStarted}), hands the waiting script
-     * commands to the game's mod command submitter, which drops them in a replay or for an observer, and plays the sounds the script's local
-     * code played since the previous call.
+     * commands to the game's mod command submitter, which drops them in a replay or for an observer, plays the sounds the script's local code
+     * played since the previous call, and last applies the map tile changes the script queued, before the triggers.
      */
     @Override
     public void onFrameStarted() {
@@ -116,6 +116,7 @@ public final class ScriptSimulationPlugin implements ScrSimulationPlugin, ImageR
         ScriptInspector.getShared().onFrameStarted(this.game, this.runtime);
         this.runtime.submitCommands(this.game.getInterfaceLink().getModCommandSubmitter());
         this.runtime.playLocalSounds();
+        this.runtime.applyTerrainChanges();
     }
 
     /**

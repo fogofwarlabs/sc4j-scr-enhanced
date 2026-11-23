@@ -15,7 +15,9 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Tests the command card of the script API: the button set table of {@code core.buttons} and its upper objects, the local states of the
@@ -31,6 +33,12 @@ final class ScriptButtonCoreTest {
     private static final int SCRIPT_ICON = 236;
     private static final int TARGET_X = 96;
     private static final int TARGET_Y = 160;
+    /**
+     * The ids of the script API's Script condition and Script and ScriptTarget actions, which map authors use.
+     */
+    private static final int SCRIPT_CONDITION_ID = 63;
+    private static final int SCRIPT_ACTION_ID = 60;
+    private static final int SCRIPT_TARGET_ACTION_ID = 61;
 
     /**
      * Records the submitted commands.
@@ -91,9 +99,9 @@ final class ScriptButtonCoreTest {
      * Creates the press of the script button with an id at its index of the Marine's set.
      */
     private static @NotNull ScrButtonInput createPress(int index, int id, boolean target) {
-        ButtonAction action = target ? ButtonAction.SCRIPT_TARGET : ButtonAction.SCRIPT;
+        ButtonAction action = target ? ButtonAction.PLUGIN_TARGET : ButtonAction.PLUGIN;
 
-        return ScrButtonInput.ofPress(MARINE_SET, index, SCRIPT_POSITION, SCRIPT_ICON, ButtonCondition.SCRIPT.getNativeAddress(), id,
+        return ScrButtonInput.ofPress(MARINE_SET, index, SCRIPT_POSITION, SCRIPT_ICON, ButtonCondition.PLUGIN.getNativeAddress(), id,
                                       action.getNativeAddress(), id, false, true);
     }
 
@@ -172,7 +180,7 @@ final class ScriptButtonCoreTest {
         peer.scenario.getRuntime().callLocalFrame(0);
 
         Assertions.assertEquals(List.of("0 " + count + " " + count + " true true true 664 null null",
-                                        "Script " + ButtonCondition.SCRIPT.ordinal() + " Script ScriptTarget",
+                                        "Script " + SCRIPT_CONDITION_ID + " Script ScriptTarget",
                                         (count + 1) + " " + (count + 1) + " true H true \"H\\u0004Halt\\nnow\" \"\\u0006No\"",
                                         "\"\\u0000\\u0004Stop it\" 13 Research",
                                         count + " " + (count + 1) + " true 13",
@@ -183,6 +191,29 @@ final class ScriptButtonCoreTest {
                                         "integer TypeError", "text TypeError",
                                         "local ok", "99"),
                                 peer.getMessages(), peer.scenario.getLines()::toString);
+    }
+
+    @Test
+    void the_script_api_names_every_condition_and_action_once_with_fixed_ids() {
+        Set<ButtonCondition> conditions = EnumSet.noneOf(ButtonCondition.class);
+        Set<ButtonAction> actions = EnumSet.noneOf(ButtonAction.class);
+
+        for (ScriptButtonCore.Condition condition : ScriptButtonCore.Condition.values()) {
+            Assertions.assertTrue(conditions.add(condition.getFunction()), condition::name);
+            Assertions.assertEquals(condition.ordinal(), ScriptButtonCore.findConditionId(condition.getFunction().getNativeAddress()));
+        }
+
+        for (ScriptButtonCore.Action action : ScriptButtonCore.Action.values()) {
+            Assertions.assertTrue(actions.add(action.getFunction()), action::name);
+            Assertions.assertEquals(action.ordinal(), ScriptButtonCore.findActionId(action.getFunction().getNativeAddress()));
+        }
+
+        Assertions.assertEquals(EnumSet.allOf(ButtonCondition.class), conditions);
+        Assertions.assertEquals(EnumSet.allOf(ButtonAction.class), actions);
+        Assertions.assertEquals(ButtonCondition.PLUGIN, ScriptButtonCore.Condition.values()[SCRIPT_CONDITION_ID].getFunction());
+        Assertions.assertEquals(ButtonAction.PLUGIN, ScriptButtonCore.Action.values()[SCRIPT_ACTION_ID].getFunction());
+        Assertions.assertEquals(ButtonAction.PLUGIN_TARGET, ScriptButtonCore.Action.values()[SCRIPT_TARGET_ACTION_ID].getFunction());
+        Assertions.assertEquals(-1, ScriptButtonCore.findConditionId(0L));
     }
 
     @Test

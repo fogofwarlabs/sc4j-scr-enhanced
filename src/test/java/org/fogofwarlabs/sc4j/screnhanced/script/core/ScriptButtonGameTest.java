@@ -77,8 +77,8 @@ final class ScriptButtonGameTest {
 
         List<byte[]> commands = new ArrayList<>();
         ScrButtonInput press = ScrButtonInput.ofPress(ScrUnitIds.TERRAN_SCV, index, BUTTON_POSITION, BUTTON_ICON,
-                                                      ButtonCondition.SCRIPT.getNativeAddress(), 0,
-                                                      ButtonAction.SCRIPT.getNativeAddress(), 0, false, false);
+                                                      ButtonCondition.PLUGIN.getNativeAddress(), 0,
+                                                      ButtonAction.PLUGIN.getNativeAddress(), 0, false, false);
 
         Assertions.assertFalse(live.getRuntime().callLocalInput(live.getRuntime().createButtonInput(press)));
         live.getRuntime().submitCommands(data -> commands.add(data.clone()));

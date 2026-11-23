@@ -11,16 +11,16 @@ import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.SequencedMap;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
+import java.util.concurrent.*;
 
 /**
  * An SC:R anim in game memory at an address: a single-entry anim of asset scale {@code 4} or {@code 2} with a canvas and a block-compressed
  * {@code diffuse} layer. Its bytes are read through the memory view when its sheet is first asked for and parsed into a texture sheet on a worker
  * thread; a write to the bytes read reads them again on the next use, and the sheet parsed last stays the result until the new one is ready. Bytes
  * that are no such anim give no sheet until they are written again.
+ * <p>
+ * An anim made by a builder instead ({@link #EmbeddedAnim(Callable, Cache)}) is built on the worker thread when its sheet is first asked for; the
+ * built bytes are kept, and a dropped sheet is parsed from them again.
  */
 final class EmbeddedAnim {
     /**
@@ -183,8 +183,9 @@ final class EmbeddedAnim {
     }
 
 
-    private final @NotNull EmbeddedMemory memory;
+    private final @Nullable EmbeddedMemory memory;
     private final int address;
+    private final @Nullable Callable<byte @NotNull []> builder;
     private final @NotNull Cache cache;
 
     /**
@@ -204,6 +205,10 @@ final class EmbeddedAnim {
      * The sheet parsed last, or {@code null} before one is ready or when the bytes read last were no anim.
      */
     private @Nullable TextureSheet sheet;
+    /**
+     * The bytes the builder made, {@code null} before; read and written on the worker thread only.
+     */
+    private byte @Nullable [] built;
 
     /**
      * Creates an {@link EmbeddedAnim} instance for an address, read on first use.
@@ -213,8 +218,23 @@ final class EmbeddedAnim {
      * @param cache   the parsed sheets of the game
      */
     EmbeddedAnim(@NotNull EmbeddedMemory memory, int address, @NotNull Cache cache) {
+        this(memory, address, null, cache);
+    }
+
+    /**
+     * Creates an {@link EmbeddedAnim} instance whose bytes a builder makes on the worker thread when its sheet is first asked for.
+     *
+     * @param builder makes the anim bytes; a builder that throws gives no sheet
+     * @param cache   the parsed sheets of the game
+     */
+    EmbeddedAnim(@NotNull Callable<byte @NotNull []> builder, @NotNull Cache cache) {
+        this(null, 0, builder, cache);
+    }
+
+    private EmbeddedAnim(@Nullable EmbeddedMemory memory, int address, @Nullable Callable<byte @NotNull []> builder, @NotNull Cache cache) {
         this.memory  = memory;
         this.address = address;
+        this.builder = builder;
         this.cache   = cache;
 
         this.observedEnd = 0;
@@ -222,6 +242,7 @@ final class EmbeddedAnim {
         this.parsing     = null;
         this.parsedSize  = 0;
         this.sheet       = null;
+        this.built       = null;
     }
 
     /**
@@ -248,7 +269,10 @@ final class EmbeddedAnim {
             this.cache.use(this, this.parsedSize);
         }
 
-        if (this.changed && this.parsing == null) {
+        if (this.changed && this.parsing == null && this.builder != null) {
+            this.changed = false;
+            this.parsing = PARSER.submit(this::build);
+        } else if (this.changed && this.parsing == null) {
             this.changed = false;
 
             byte[] data = this.read();
@@ -273,6 +297,29 @@ final class EmbeddedAnim {
     }
 
     /**
+     * Builds the anim bytes once, on the worker thread, and parses them.
+     *
+     * @return the texture sheet
+     * @throws Exception if the builder throws or the bytes are no anim
+     */
+    private @NotNull TextureSheet build() throws Exception {
+        byte[] data = this.built;
+
+        if (data == null && this.builder != null) {
+            data       = this.builder.call();
+            this.built = data;
+        }
+
+        if (data == null) {
+            throw Exceptions.newIllegalStateException("The anim has no builder.");
+        }
+
+        this.parsedSize = data.length;
+
+        return parse(data);
+    }
+
+    /**
      * Drops the parsed sheet; the next use reads the bytes again.
      */
     private void drop() {
@@ -286,12 +333,18 @@ final class EmbeddedAnim {
      * @return the bytes, or {@code null} if the bytes at the address are no anim or cannot be read
      */
     private byte @Nullable [] read() {
+        EmbeddedMemory view = this.memory;
+
+        if (view == null) {
+            return null;
+        }
+
         byte[] data = new byte[0];
         long size = AnimFile.findContentSize(data, 0);
 
         while (size > data.length && size <= MAXIMUM_SIZE) {
             byte[] grown = new byte[(int) size];
-            int count = this.memory.read(this.address, grown, 0, grown.length);
+            int count = view.read(this.address, grown, 0, grown.length);
 
             this.observe(Math.max(count, Integer.BYTES));
 
@@ -314,7 +367,7 @@ final class EmbeddedAnim {
      * @param end the end of the bytes to observe, as an offset from the address
      */
     private void observe(long end) {
-        if (end > this.observedEnd) {
+        if (end > this.observedEnd && this.memory != null) {
             this.memory.observeWrites(this.address + (int) this.observedEnd, (int) (end - this.observedEnd), this::onWrite);
             this.observedEnd = end;
         }

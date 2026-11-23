@@ -44,9 +44,9 @@ import java.util.function.UnaryOperator;
  * unknown has the condition or action {@code -1}.
  * <p>
  * The conditions and actions: {@code getConditionCount()}, {@code getConditionName(id)}, {@code getActionCount()} and
- * {@code getActionName(id)}, in the order of SC:R's lists; the last condition, {@code Script}, gives the state that
- * {@code core.local.setButtonState} sets for its condition value, and the last actions, {@code Script} and {@code ScriptTarget}, send no
- * command: the press, or the target of a targeting mode, reaches the local input hooks only.
+ * {@code getActionName(id)}, in the order of the script API's own lists ({@link Condition}, {@link Action}); the last condition,
+ * {@code Script}, gives the state that {@code core.local.setButtonState} sets for its condition value, and the last actions, {@code Script}
+ * and {@code ScriptTarget}, send no command: the press, or the target of a targeting mode, reaches the local input hooks only.
  */
 final class ScriptButtonCore {
     /**
@@ -68,8 +68,172 @@ final class ScriptButtonCore {
     private static final int UNKNOWN_FUNCTION = -1;
 
     private static final HostButtonSets.@NotNull Button @NotNull [] NO_BUTTONS = new HostButtonSets.Button[0];
-    private static final @NotNull ButtonCondition @NotNull [] CONDITIONS = ButtonCondition.values();
-    private static final @NotNull ButtonAction @NotNull [] ACTIONS = ButtonAction.values();
+    private static final @NotNull Condition @NotNull [] CONDITIONS = Condition.values();
+    private static final @NotNull Action @NotNull [] ACTIONS = Action.values();
+
+    /**
+     * The conditions of the script API: the id is the ordinal, the name the Pascal case constant name. New conditions go last.
+     */
+    enum Condition {
+        ALWAYS(ButtonCondition.ALWAYS),
+        REPLAY_SLOW_DOWN(ButtonCondition.REPLAY_SLOW_DOWN),
+        REPLAY_SPEED_UP(ButtonCondition.REPLAY_SPEED_UP),
+        REPLAY_PLAY_PAUSE(ButtonCondition.REPLAY_PLAY_PAUSE),
+        UNIT_REQUIREMENT(ButtonCondition.UNIT_REQUIREMENT),
+        HANGAR_UNIT_REQUIREMENT(ButtonCondition.HANGAR_UNIT_REQUIREMENT),
+        ANY_CAN_MOVE(ButtonCondition.ANY_CAN_MOVE),
+        ANY_HAS_RIGHT_CLICK(ButtonCondition.ANY_HAS_RIGHT_CLICK),
+        ANY_CAN_ATTACK(ButtonCondition.ANY_CAN_ATTACK),
+        ANY_ENABLED_CAN_ATTACK(ButtonCondition.ANY_ENABLED_CAN_ATTACK),
+        TRAINING_UNIT(ButtonCondition.TRAINING_UNIT),
+        BUILDING_ADDON(ButtonCondition.BUILDING_ADDON),
+        IS_HATCHERY(ButtonCondition.IS_HATCHERY),
+        RALLY_ORDER(ButtonCondition.RALLY_ORDER),
+        HATCHERY_RALLY_ORDER(ButtonCondition.HATCHERY_RALLY_ORDER),
+        INCOMPLETE(ButtonCondition.INCOMPLETE),
+        UPGRADING(ButtonCondition.UPGRADING),
+        RESEARCHING(ButtonCondition.RESEARCHING),
+        ANY_NOT_CARRYING(ButtonCondition.ANY_NOT_CARRYING),
+        ANY_CARRYING(ButtonCondition.ANY_CARRYING),
+        ANY_CAN_LOAD(ButtonCondition.ANY_CAN_LOAD),
+        ANY_HAS_LOADED(ButtonCondition.ANY_HAS_LOADED),
+        RESEARCH_REQUIREMENT(ButtonCondition.RESEARCH_REQUIREMENT),
+        TECHNOLOGY_USE_REQUIREMENT(ButtonCondition.TECHNOLOGY_USE_REQUIREMENT),
+        ANY_TECHNOLOGY_USE_REQUIREMENT(ButtonCondition.ANY_TECHNOLOGY_USE_REQUIREMENT),
+        UPGRADE_REQUIREMENT(ButtonCondition.UPGRADE_REQUIREMENT),
+        CAN_CLOAK(ButtonCondition.CAN_CLOAK),
+        CAN_DECLOAK(ButtonCondition.CAN_DECLOAK),
+        CAN_CLOAK_OWN_TECHNOLOGY(ButtonCondition.CAN_CLOAK_OWN_TECHNOLOGY),
+        CAN_DECLOAK_OWN_TECHNOLOGY(ButtonCondition.CAN_DECLOAK_OWN_TECHNOLOGY),
+        CAN_SIEGE(ButtonCondition.CAN_SIEGE),
+        CAN_UNSIEGE(ButtonCondition.CAN_UNSIEGE),
+        NONE_SIEGED(ButtonCondition.NONE_SIEGED),
+        NUCLEAR_SILO_READY(ButtonCondition.NUCLEAR_SILO_READY),
+        NOT_DISABLED(ButtonCondition.NOT_DISABLED),
+        NOT_GROUNDED(ButtonCondition.NOT_GROUNDED),
+        CAN_LAND(ButtonCondition.CAN_LAND),
+        CAN_LIFT_OFF(ButtonCondition.CAN_LIFT_OFF),
+        CAN_BURROW(ButtonCondition.CAN_BURROW),
+        CAN_UNBURROW(ButtonCondition.CAN_UNBURROW),
+        LURKER_ASPECT(ButtonCondition.LURKER_ASPECT),
+        NONE_BURROWED(ButtonCondition.NONE_BURROWED),
+        NONE_BURROWED_CAN_ATTACK(ButtonCondition.NONE_BURROWED_CAN_ATTACK),
+        NONE_BURROWED_NOT_CARRYING(ButtonCondition.NONE_BURROWED_NOT_CARRYING),
+        NONE_BURROWED_CARRYING(ButtonCondition.NONE_BURROWED_CARRYING),
+        SAME_BURROW_STATE(ButtonCondition.SAME_BURROW_STATE),
+        NO_NYDUS_EXIT(ButtonCondition.NO_NYDUS_EXIT),
+        ZERG_BASIC_STRUCTURES(ButtonCondition.ZERG_BASIC_STRUCTURES),
+        ZERG_ADVANCED_STRUCTURES(ButtonCondition.ZERG_ADVANCED_STRUCTURES),
+        CARRIER_HAS_INTERCEPTORS(ButtonCondition.CARRIER_HAS_INTERCEPTORS),
+        REAVER_HAS_SCARABS(ButtonCondition.REAVER_HAS_SCARABS),
+        TECHNOLOGY_USE_DISABLED(ButtonCondition.TECHNOLOGY_USE_DISABLED),
+        ARCHON_WARP(ButtonCondition.ARCHON_WARP),
+        DARK_ARCHON_MELD(ButtonCondition.DARK_ARCHON_MELD),
+        PROTOSS_BASIC_STRUCTURES(ButtonCondition.PROTOSS_BASIC_STRUCTURES),
+        PROTOSS_ADVANCED_STRUCTURES(ButtonCondition.PROTOSS_ADVANCED_STRUCTURES),
+        ALL_CONSTRUCTING(ButtonCondition.ALL_CONSTRUCTING),
+        ANY_NOT_CONSTRUCTING(ButtonCondition.ANY_NOT_CONSTRUCTING),
+        SCV_CAN_GATHER(ButtonCondition.SCV_CAN_GATHER),
+        SCV_CAN_RETURN_CARGO(ButtonCondition.SCV_CAN_RETURN_CARGO),
+        TERRAN_BASIC_STRUCTURES(ButtonCondition.TERRAN_BASIC_STRUCTURES),
+        TERRAN_ADVANCED_STRUCTURES(ButtonCondition.TERRAN_ADVANCED_STRUCTURES),
+        SINGLE_UNIT_REQUIREMENT(ButtonCondition.SINGLE_UNIT_REQUIREMENT),
+        SCRIPT(ButtonCondition.PLUGIN);
+
+        private final @NotNull ButtonCondition function;
+
+        Condition(@NotNull ButtonCondition function) {
+            this.function = function;
+        }
+
+        /**
+         * @return the SC:R condition function
+         */
+        @NotNull ButtonCondition getFunction() {
+            return this.function;
+        }
+    }
+
+    /**
+     * The actions of the script API: the id is the ordinal, the name the Pascal case constant name. New actions go last.
+     */
+    enum Action {
+        MOVE(ButtonAction.MOVE),
+        STOP(ButtonAction.STOP),
+        ATTACK(ButtonAction.ATTACK),
+        PATROL(ButtonAction.PATROL),
+        HOLD_POSITION(ButtonAction.HOLD_POSITION),
+        STIM_PACKS(ButtonAction.STIM_PACKS),
+        CLOAK(ButtonAction.CLOAK),
+        DECLOAK(ButtonAction.DECLOAK),
+        USE_TECHNOLOGY(ButtonAction.USE_TECHNOLOGY),
+        NUCLEAR_STRIKE(ButtonAction.NUCLEAR_STRIKE),
+        SIEGE(ButtonAction.SIEGE),
+        UNSIEGE(ButtonAction.UNSIEGE),
+        REPAIR(ButtonAction.REPAIR),
+        GATHER(ButtonAction.GATHER),
+        RETURN_CARGO(ButtonAction.RETURN_CARGO),
+        CHANGE_BUTTONS(ButtonAction.CHANGE_BUTTONS),
+        LOAD(ButtonAction.LOAD),
+        UNLOAD_ALL(ButtonAction.UNLOAD_ALL),
+        HEAL(ButtonAction.HEAL),
+        UNIT_MORPH(ButtonAction.UNIT_MORPH),
+        CANCEL_MORPH(ButtonAction.CANCEL_MORPH),
+        BURROW(ButtonAction.BURROW),
+        UNBURROW(ButtonAction.UNBURROW),
+        INFESTED_TERRAN_ATTACK(ButtonAction.INFESTED_TERRAN_ATTACK),
+        DARK_ARCHON_MELD(ButtonAction.DARK_ARCHON_MELD),
+        ARCHON_WARP(ButtonAction.ARCHON_WARP),
+        CARRIER_MOVE(ButtonAction.CARRIER_MOVE),
+        CARRIER_STOP(ButtonAction.CARRIER_STOP),
+        CARRIER_ATTACK(ButtonAction.CARRIER_ATTACK),
+        TRAIN_HANGAR_UNIT(ButtonAction.TRAIN_HANGAR_UNIT),
+        CANCEL_LAST(ButtonAction.CANCEL_LAST),
+        REAVER_STOP(ButtonAction.REAVER_STOP),
+        REAVER_ATTACK(ButtonAction.REAVER_ATTACK),
+        TRAIN(ButtonAction.TRAIN),
+        SET_RALLY_POINT(ButtonAction.SET_RALLY_POINT),
+        BUILD_ADDON(ButtonAction.BUILD_ADDON),
+        LAND(ButtonAction.LAND),
+        LIFT_OFF(ButtonAction.LIFT_OFF),
+        CANCEL_ADDON(ButtonAction.CANCEL_ADDON),
+        UPGRADE(ButtonAction.UPGRADE),
+        RESEARCH(ButtonAction.RESEARCH),
+        CANCEL_UPGRADE(ButtonAction.CANCEL_UPGRADE),
+        CANCEL_RESEARCH(ButtonAction.CANCEL_RESEARCH),
+        BUILDING_ATTACK(ButtonAction.BUILDING_ATTACK),
+        SELECT_LARVA(ButtonAction.SELECT_LARVA),
+        BUILDING_MORPH(ButtonAction.BUILDING_MORPH),
+        PLACE_NYDUS_EXIT(ButtonAction.PLACE_NYDUS_EXIT),
+        RECHARGE_SHIELDS(ButtonAction.RECHARGE_SHIELDS),
+        PLACE_BEACON(ButtonAction.PLACE_BEACON),
+        CANCEL_TARGETING(ButtonAction.CANCEL_TARGETING),
+        CANCEL_PLACEMENT(ButtonAction.CANCEL_PLACEMENT),
+        CANCEL_CONSTRUCTION(ButtonAction.CANCEL_CONSTRUCTION),
+        CANCEL_INFESTATION(ButtonAction.CANCEL_INFESTATION),
+        CANCEL_NUCLEAR_STRIKE(ButtonAction.CANCEL_NUCLEAR_STRIKE),
+        ZERG_BUILD(ButtonAction.ZERG_BUILD),
+        TERRAN_BUILD(ButtonAction.TERRAN_BUILD),
+        PROTOSS_BUILD(ButtonAction.PROTOSS_BUILD),
+        REPLAY_PLAY_PAUSE(ButtonAction.REPLAY_PLAY_PAUSE),
+        REPLAY_SLOW_DOWN(ButtonAction.REPLAY_SLOW_DOWN),
+        REPLAY_SPEED_UP(ButtonAction.REPLAY_SPEED_UP),
+        SCRIPT(ButtonAction.PLUGIN),
+        SCRIPT_TARGET(ButtonAction.PLUGIN_TARGET);
+
+        private final @NotNull ButtonAction function;
+
+        Action(@NotNull ButtonAction function) {
+            this.function = function;
+        }
+
+        /**
+         * @return the SC:R action function
+         */
+        @NotNull ButtonAction getFunction() {
+            return this.function;
+        }
+    }
 
     /**
      * Reads a field of a button.
@@ -94,9 +258,13 @@ final class ScriptButtonCore {
      * @return the condition id, or {@code -1} for an unknown function
      */
     static int findConditionId(long address) {
-        ButtonCondition condition = ButtonCondition.ofNativeAddress(address);
+        for (Condition condition : CONDITIONS) {
+            if (condition.getFunction().getNativeAddress() == address) {
+                return condition.ordinal();
+            }
+        }
 
-        return condition == null ? UNKNOWN_FUNCTION : condition.ordinal();
+        return UNKNOWN_FUNCTION;
     }
 
     /**
@@ -106,9 +274,13 @@ final class ScriptButtonCore {
      * @return the action id, or {@code -1} for an unknown function
      */
     static int findActionId(long address) {
-        ButtonAction action = ButtonAction.ofNativeAddress(address);
+        for (Action action : ACTIONS) {
+            if (action.getFunction().getNativeAddress() == address) {
+                return action.ordinal();
+            }
+        }
 
-        return action == null ? UNKNOWN_FUNCTION : action.ordinal();
+        return UNKNOWN_FUNCTION;
     }
 
     /**
@@ -297,7 +469,7 @@ final class ScriptButtonCore {
                         button.getActionValue(), button.getEnabledString(), button.getDisabledString());
         });
         this.defineField(namespace, global, "Condition", button -> findConditionId(button.getCondition()), (button, value) -> {
-            long condition = CONDITIONS[ScriptCoreUtils.requireId("condition", value, CONDITIONS.length)].getNativeAddress();
+            long condition = CONDITIONS[ScriptCoreUtils.requireId("condition", value, CONDITIONS.length)].getFunction().getNativeAddress();
 
             return copy(button, button.getPosition(), button.getIcon(), condition, button.getConditionValue(), button.getAction(),
                         button.getActionValue(), button.getEnabledString(), button.getDisabledString());
@@ -309,7 +481,7 @@ final class ScriptButtonCore {
                         button.getActionValue(), button.getEnabledString(), button.getDisabledString());
         });
         this.defineField(namespace, global, "Action", button -> findActionId(button.getAction()), (button, value) -> {
-            long action = ACTIONS[ScriptCoreUtils.requireId("action", value, ACTIONS.length)].getNativeAddress();
+            long action = ACTIONS[ScriptCoreUtils.requireId("action", value, ACTIONS.length)].getFunction().getNativeAddress();
 
             return copy(button, button.getPosition(), button.getIcon(), button.getCondition(), button.getConditionValue(), action,
                         button.getActionValue(), button.getEnabledString(), button.getDisabledString());
@@ -356,9 +528,10 @@ final class ScriptButtonCore {
             HostButtonSets.Button button = new HostButtonSets.Button(
                     readRange(arguments, 2, "position", FIRST_POSITION, LAST_POSITION), readValue(arguments, 3, WORD_MAXIMUM),
                     CONDITIONS[ScriptCoreUtils.requireId("condition", ScriptCoreUtils.readInteger(arguments, 4), CONDITIONS.length)]
-                            .getNativeAddress(),
+                            .getFunction().getNativeAddress(),
                     readValue(arguments, 5, BYTE_MAXIMUM),
-                    ACTIONS[ScriptCoreUtils.requireId("action", ScriptCoreUtils.readInteger(arguments, 6), ACTIONS.length)].getNativeAddress(),
+                    ACTIONS[ScriptCoreUtils.requireId("action", ScriptCoreUtils.readInteger(arguments, 6), ACTIONS.length)]
+                            .getFunction().getNativeAddress(),
                     readValue(arguments, 7, WORD_MAXIMUM),
                     readValue(arguments, 8, WORD_MAXIMUM), readValue(arguments, 9, WORD_MAXIMUM)
             );
