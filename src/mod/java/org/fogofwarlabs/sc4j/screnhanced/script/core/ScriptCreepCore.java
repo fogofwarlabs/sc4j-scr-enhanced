@@ -19,7 +19,10 @@ import org.mozilla.javascript.Scriptable;
  * {@code fill(unitType, x, y)} covers the footprint of a building of the unit type centered at the map position with creep and grows it until
  * no tile is added, as the game does for a building that needs creep ({@link CreepField#fillMoved}). {@code spread(unitType, x, y)} runs one
  * spread step of a creep source of the unit type there ({@link CreepField#spread}): {@code 1} when it added a tile, {@code 2} when it added
- * none and an occupied tile blocked it, else {@code 0}; a type that spreads creep keeps to its ellipse. {@code removeTile(tileX, tileY)}
+ * none and an occupied tile blocked it, else {@code 0}; a type that spreads creep keeps to its ellipse. {@code fillTiles(left, top, width,
+ * height)} adds creep to every tile of a rectangle of tiles that can take it, as a finished building adds creep under its footprint
+ * ({@link CreepField#fillTile}), row by row from the top left tile, and returns the number of tiles that took creep; a rectangle that leaves the
+ * map throws a {@code RangeError}. {@code removeTile(tileX, tileY)}
  * removes the creep of a tile at once and gives back the terrain below it ({@link CreepField#removeTile}). {@code recede(tileX, tileY)} starts
  * the recession of a creep tile as a removed building does ({@link CreepField#recedeTile}): a tile that is not receding, not occupied and not
  * sustained by a grounded Zerg building recedes later at the pace of the recession; it returns {@code false} for a skipped tile and when no
@@ -71,6 +74,32 @@ final class ScriptCreepCore {
             } catch (UnsupportedOperationException exception) {
                 throw ScriptRuntime.rangeError(Exceptions.format("The spread of the unit type {0} at {1}, {2} leaves the map.", unitType, x, y));
             }
+        });
+        ScriptCoreUtils.defineFunction(global, namespace, "fillTiles", 4, (context, scope, thisObject, arguments) -> {
+            this.scriptGame.checkWritable();
+
+            int left = ScriptCoreUtils.readInteger(arguments, 0);
+            int top = ScriptCoreUtils.readInteger(arguments, 1);
+            int width = ScriptCoreUtils.readInteger(arguments, 2);
+            int height = ScriptCoreUtils.readInteger(arguments, 3);
+            GameMap map = this.getMap();
+
+            if (left < 0 || top < 0 || width < 0 || height < 0 || left > map.getWidth() - width || top > map.getHeight() - height) {
+                throw ScriptRuntime.rangeError(Exceptions.format("The {0}x{1} tiles at {2}, {3} leave the map.", width, height, left, top));
+            }
+
+            CreepField creep = this.requireCreepField();
+            int filled = 0;
+
+            for (int row = 0; row < height; row++) {
+                for (int column = 0; column < width; column++) {
+                    if (creep.fillTile(this.scriptGame.getGame(), left + column, top + row)) {
+                        filled++;
+                    }
+                }
+            }
+
+            return (double) filled;
         });
         ScriptCoreUtils.defineFunction(global, namespace, "removeTile", 2, (context, scope, thisObject, arguments) -> {
             this.scriptGame.checkWritable();

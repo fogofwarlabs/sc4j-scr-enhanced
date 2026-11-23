@@ -1123,7 +1123,7 @@ interface Hooks {
     onBeforeDamage?(decision: DamageDecision): void;
 
     /**
-     * Decides an order issued to a unit; the game is read-only meanwhile.
+     * Decides an order a unit receives, issued or inserted into its queue by a game routine; the game is read-only meanwhile.
      */
     onBeforeOrder?(decision: OrderDecision): void;
 
@@ -2561,9 +2561,17 @@ interface Unit {
     setHp(hp: number): void;
 
     /**
-     * @returns the shown maximum hit points of the unit's type in units.dat
+     * @returns the shown maximum hit points: the unit's own ({@link setMaxHp}), else those of its type in units.dat
      */
     getMaxHp(): number;
+
+    /**
+     * Sets the unit's own maximum hit points while it lives; the hit points then stay at most the maximum. Repair, healing, regeneration,
+     * completion, the percentages and the display use it. Shared code only.
+     *
+     * @param hp the shown maximum, rounded to 1/256 and at least 1/256, or null for that of the unit's type
+     */
+    setMaxHp(hp: number | null): void;
 
     /**
      * @returns the shields, 0 for a unit without shields
@@ -2827,6 +2835,12 @@ interface Unit {
     isDetectedBy(player: Player): boolean;
 
     /**
+     * @returns true when the unit can reach the position: always for a unit that does not move on the ground, else when the position lies in
+     *          the unit's connected area of the ground ({@link GameMap.isReachable})
+     */
+    canReach(position: Position): boolean;
+
+    /**
      * @returns the players whose sight covers the unit
      */
     getVisibleTo(): Player[];
@@ -3029,6 +3043,36 @@ interface Unit {
      * @returns the top speed in 1/256 pixels per frame
      */
     getTopSpeed(): number;
+
+    /**
+     * @returns the percentage of the unit's movement speeds and acceleration, 100 for the native ones
+     */
+    getSpeedPercent(): number;
+
+    /**
+     * Sets the percentage of the unit's movement speeds and acceleration while it lives, applied after the speed upgrades, Stim Packs and
+     * Ensnare. Shared code only.
+     *
+     * @param percent the percentage, 0 to 10000
+     */
+    setSpeedPercent(percent: number): void;
+
+    /**
+     * @param weapon a weapon of the unit
+     * @returns the maximum range in pixels the game uses: the weapon's range, the Bunker, upgrade and hero bonuses and the unit's bonus
+     */
+    getWeaponRange(weapon: WeaponType): number;
+
+    /**
+     * @returns the range in pixels added to the maximum range of the unit's weapons, 0 without a bonus
+     */
+    getWeaponRangeBonus(): number;
+
+    /**
+     * Sets the range in pixels added to the maximum range of the unit's weapons and of its turret's while it lives; negative shortens the
+     * range. Shared code only.
+     */
+    setWeaponRangeBonus(pixels: number): void;
 
     /**
      * @returns the position the unit moves to
@@ -4471,6 +4515,24 @@ interface GameMap {
     getTileHeight(): number;
 
     /**
+     * Finds the position a move command to a position gives one ground unit: the position itself where the unit type stands, else walkable
+     * ground nearby on the side the unit comes from, as a right click on blocked ground moves its target. Reads the pathing regions the game has
+     * now, also after tile changes.
+     *
+     * @param position the commanded position
+     * @param from     the unit, or the position the unit comes from
+     * @param unitType the unit type; the unit's type when it is left out for a unit, needed for a position
+     * @returns the position in map pixels
+     */
+    findWalkablePosition(position: Position, from: Unit | Position, unitType?: UnitType): Position;
+
+    /**
+     * @returns true when both positions lie in one connected area of the ground, so that a ground unit at one can walk to the other; an
+     *          unwalkable position is reachable from no walkable one
+     */
+    isReachable(from: Position, to: Position): boolean;
+
+    /**
      * The tileset of the map and its tiles.
      */
     readonly tileset: Tileset;
@@ -4580,7 +4642,8 @@ interface Units {
     findInRadius(position: Position, radius: number, filter?: UnitFilter): Unit[];
 
     /**
-     * Creates a unit as the Create Unit action does. Shared code only.
+     * Creates a unit as the Create Unit action does, without its "Unit unplaceable" message. A type without the units.dat flag Unit Listing (the
+     * traps, the doors and other doodads) is not created. Shared code only.
      *
      * @param type     the unit type
      * @param player   the owner
@@ -4588,6 +4651,16 @@ interface Units {
      * @returns the new unit, or null when it could not be placed
      */
     create(type: UnitType, player: Player, position: Position): Unit | null;
+
+    /**
+     * Finds the position where {@link create} would place a unit, without creating it. Shared code only.
+     *
+     * @param type     the unit type
+     * @param player   the owner
+     * @param position the requested position in map pixels
+     * @returns the position in map pixels, or null when {@link create} would create none there
+     */
+    findPlacement(type: UnitType, player: Player, position: Position): Position | null;
 }
 
 /**
@@ -4882,14 +4955,15 @@ interface Resources {
     getImage(name: string): Image;
 
     /**
-     * Reads a PNG or DDS picture as a sheet of frames. The same name and layout return the same object. The anims of a map's sheets take at
-     * most 128 MiB together, one byte per texel and layer.
+     * Reads a PNG or DDS picture as a sheet of frames. The same name and layout return the same object. The graphics made of a map's sheets
+     * take at most 256 MiB together, one byte per texel and layer of each distinct frame they show; frames no graphics shows take nothing. The
+     * call that makes graphics past the limit throws a RangeError.
      *
      * @param name   the path relative to resources/
      * @param layout the frame layout
      * @returns the sheet
      * @throws RangeError if the layout does not fit the picture, the canvas exceeds 255 by 255 map pixels, a picture exceeds 4096 by 4096
-     * pixels or the anims would exceed 128 MiB
+     * pixels
      */
     getSheet(name: string, layout: SheetLayout): Sheet;
 
@@ -4929,6 +5003,11 @@ interface ImageGraphics {
      * A sheet instead of the GRP and the anims; it may not be given with them.
      */
     sheet?: Sheet | null;
+    /**
+     * With a sheet: for each frame set the image's iscript plays, the frame set of the sheet that draws it; the sheet's own order by default. A
+     * sheet with fewer frame sets can follow a native script this way.
+     */
+    frameSets?: number[] | null;
     /**
      * The GRP of the SD graphics.
      */
@@ -5019,7 +5098,8 @@ interface Tileset {
  * The tiles of the map by tile coordinates ({@link GameMap.terrain}); a coordinate outside the map throws a RangeError. The changes apply
  * together at the next trigger step, after the frame start hooks (onFrame, the events, the timers) and before the triggers, as on a map that
  * had the tiles from the start: walkability, pathing regions, buildability, sight and the minimap follow, and ground units on tiles that became
- * unwalkable move to walkable ground nearby. Reads see the changes made so far.
+ * unwalkable move to the nearest free walkable ground and start their current order again, so a moving unit keeps moving to its target. Reads
+ * see the changes made so far.
  */
 interface Terrain {
     /**
@@ -5047,12 +5127,61 @@ interface Terrain {
     fillTiles(location: Location, tile: Tile): void;
 
     /**
+     * Sets every tile of a rectangle of tiles; a rectangle that leaves the map throws a RangeError. Shared code only.
+     *
+     * @param left   the left tile column
+     * @param top    the top tile row
+     * @param width  the width in tiles
+     * @param height the height in tiles
+     * @param tile   the new tile
+     */
+    fillTiles(left: number, top: number, width: number, height: number, tile: Tile): void;
+
+    /**
      * Copies the tiles one location covers onto the tiles another location covers. Shared code only.
      *
      * @param fromLocation the source area
      * @param toLocation   the target area; a RangeError when it does not cover as many tiles across and down as the source
      */
     copyTiles(fromLocation: Location, toLocation: Location): void;
+
+    /**
+     * Copies the tiles of a rectangle of tiles onto the rectangle of the same size at another place; the rectangles may overlap. A rectangle
+     * that leaves the map throws a RangeError. Shared code only.
+     *
+     * @param left   the left tile column of the copied rectangle
+     * @param top    the top tile row of the copied rectangle
+     * @param width  the width in tiles
+     * @param height the height in tiles
+     * @param toLeft the left tile column of the target rectangle
+     * @param toTop  the top tile row of the target rectangle
+     */
+    copyTiles(left: number, top: number, width: number, height: number, toLeft: number, toTop: number): void;
+
+    /**
+     * Sets every tile of a rectangle of tiles in one call, for large areas: a 96 by 96 rectangle costs one call. A rectangle that leaves the
+     * map, a tile count other than width times height or a tile id the tileset does not have throws a RangeError, and then no tile changes.
+     * Shared code only.
+     *
+     * @param left   the left tile column
+     * @param top    the top tile row
+     * @param width  the width in tiles
+     * @param height the height in tiles
+     * @param tiles  the new tiles, or their ids ({@link Tile.getId}), row by row from the top left tile
+     */
+    setTiles(left: number, top: number, width: number, height: number, tiles: ReadonlyArray<Tile | number>): void;
+
+    /**
+     * Replaces the picture of the tile's megatile with an image, for every tile that shows the same megatile (other tiles of the tileset may
+     * show it too), as presentation: the HD and HD2 graphics draw the image stretched over the tile with its alpha over the installed tile, the
+     * classic graphics its pixels quantized to the tileset palette where they are opaque. A later call for the same megatile replaces the
+     * earlier one. Shared code only, at the module top level or in onStart; a side of the image that is not a multiple of 32 pixels throws a
+     * RangeError.
+     *
+     * @param tile  the tile whose megatile is replaced
+     * @param image the picture, 32, 64 or 128 pixels square for SD, HD2 and HD detail
+     */
+    replaceTileImage(tile: Tile, image: Image): void;
 
     /**
      * The creep of the map.
@@ -5089,6 +5218,28 @@ interface Creep {
      * @returns true when it added a tile
      */
     spread(unitType: UnitType, position: Position): boolean;
+
+    /**
+     * Adds creep to every tile a location covers, clipped to the map, that can take it, as a finished building adds creep under its footprint:
+     * a tile that has creep, cannot have creep (unbuildable, partially walkable or above an unbuildable tile) or is occupied by a building
+     * stays. Shared code only.
+     *
+     * @param location the covered area
+     * @returns the number of tiles that took creep
+     */
+    fillTiles(location: Location): number;
+
+    /**
+     * Adds creep to every tile of a rectangle of tiles that can take it, as {@link fillTiles} does for a location; a rectangle that leaves the
+     * map throws a RangeError. Shared code only.
+     *
+     * @param left   the left tile column
+     * @param top    the top tile row
+     * @param width  the width in tiles
+     * @param height the height in tiles
+     * @returns the number of tiles that took creep
+     */
+    fillTiles(left: number, top: number, width: number, height: number): number;
 
     /**
      * Removes the creep of a tile at once and gives back the terrain below it. Shared code only.
@@ -5551,9 +5702,9 @@ interface ImageOptions {
 }
 
 /**
- * Draws in one space ({@link Screen}, {@link Screen.world}, {@link Screen.minimap}). The drawing functions work only in onRender and throw a
- * TypeError anywhere else. Coordinates are numbers with fractions, drawn at the real resolution; what a call draws is drawn in call order and
- * stays until the next onRender call. A negative size or thickness throws a RangeError; a color outside 0 to 0xFFFFFFFF throws.
+ * Draws in one space ({@link Screen}, {@link Screen.world}, {@link Screen.ground}, {@link Screen.minimap}). The drawing functions work only in
+ * onRender and throw a TypeError anywhere else. Coordinates are numbers with fractions, drawn at the real resolution; what a call draws is drawn in
+ * call order and stays until the next onRender call. A negative size or thickness throws a RangeError; a color outside 0 to 0xFFFFFFFF throws.
  */
 interface Drawing {
     /**
@@ -5651,8 +5802,10 @@ interface Drawing {
 /**
  * The game screen that onRender receives, in interface units: 480 high, as wide as the interface (640, 853, ...), drawn above the console and
  * below the game menus; sizes, line thicknesses and texts are in interface units. {@link Screen.world} draws in map pixels following the
- * camera, above the units and below the console (thicknesses and texts in map pixels, so they follow the zoom); {@link Screen.minimap} draws
- * in map pixels on the minimap (thicknesses, points and texts in interface units).
+ * camera, above the units and below the console (thicknesses and texts in map pixels, so they follow the zoom); {@link Screen.ground} draws
+ * the same way above the terrain and below the units, their shadows and the foliage, at the resolution of the world (the SD graphics draw it in
+ * their 480 lines), with the fog of war over it; {@link Screen.minimap} draws in map pixels on the minimap (thicknesses, points and texts in
+ * interface units).
  */
 interface Screen extends Drawing {
     /**
@@ -5695,6 +5848,10 @@ interface Screen extends Drawing {
      * The drawing in map pixels above the units, following the camera.
      */
     readonly world: Drawing;
+    /**
+     * The drawing in map pixels above the terrain and below the units, following the camera.
+     */
+    readonly ground: Drawing;
     /**
      * The drawing in map pixels on the minimap.
      */
@@ -5993,6 +6150,19 @@ interface Console {
     isVisible(): boolean;
 
     /**
+     * Shows only the minimap of the console: the console art is not drawn and the map shows through it, and every dialog but the minimap and
+     * the text box is hidden unless the script shows it ({@link ConsoleControlHandle.setVisible}).
+     *
+     * @param minimapOnly true to show only the minimap
+     */
+    setMinimapOnly(minimapOnly: boolean): void;
+
+    /**
+     * @returns true while the console shows only the minimap
+     */
+    isMinimapOnly(): boolean;
+
+    /**
      * @param control the dialog
      * @returns the object of the dialog, the same for the same dialog
      */
@@ -6105,36 +6275,64 @@ interface DisplaySound {
 }
 
 /**
+ * The graphics of the shadow and the remains of {@link DisplayImages.replace}: a given value replaces them, null draws nothing, a value left out
+ * keeps them.
+ */
+interface ImagePartOptions {
+    /**
+     * The graphics of the shadow: the images of a sprite drawn with the shadow draw function below another main image.
+     */
+    shadow?: ImageGraphics | null;
+    /**
+     * The graphics of the remains of a unit that dies: the images its sprite gets after the death, as those of its death animation, and the
+     * sprites those images create, as the remnant on the ground, and the sprites these create in turn. They last until those sprites are gone.
+     */
+    remains?: ImageGraphics | null;
+}
+
+/**
+ * The options of {@link DisplayImages.replaceUnit}.
+ */
+interface UnitImageOptions extends ImagePartOptions {
+    /**
+     * The image type of the replaced images, by default that of the unit's main image now.
+     */
+    imageType?: ImageType;
+}
+
+/**
  * The graphics of the game's images ({@link Display.images}). Shared code replaces them on every player's game, local code only on this
  * machine.
  */
 interface DisplayImages {
     /**
-     * Replaces the graphics of every image of an image type.
+     * Replaces the graphics of every image of an image type, and of the shadow and the remains of the sprites whose main image is of the type.
      *
      * @param imageType the image type
-     * @param images    the new graphics; a value that is no object throws a TypeError
+     * @param images    the new graphics, or null to keep them; a value that is no object throws a TypeError
+     * @param options   the graphics of the shadow and the remains
      */
-    replace(imageType: ImageType, images: ImageGraphics): void;
+    replace(imageType: ImageType, images: ImageGraphics | null, options?: ImagePartOptions): void;
 
     /**
-     * Restores the installed graphics of an image type.
+     * Restores the installed graphics of an image type, its shadow and its remains.
      *
      * @param imageType the image type
      */
     restore(imageType: ImageType): void;
 
     /**
-     * Replaces the graphics of a unit's images of an image type while the unit lives. A gone unit throws an Error.
+     * Replaces the graphics of a unit's images of an image type, and of its shadow and its remains, while the unit lives; they win over those of
+     * the image type. A gone unit throws an Error.
      *
-     * @param unit      the unit
-     * @param images    the new graphics
-     * @param imageType the image type, by default that of the unit's main image now
+     * @param unit    the unit
+     * @param images  the new graphics, or null to keep them
+     * @param options the image type and the graphics of the shadow and the remains
      */
-    replaceUnit(unit: Unit, images: ImageGraphics, imageType?: ImageType): void;
+    replaceUnit(unit: Unit, images: ImageGraphics | null, options?: UnitImageOptions): void;
 
     /**
-     * Restores the graphics of a unit's images of an image type. A gone unit throws an Error.
+     * Restores the graphics of a unit's images of an image type, its shadow and its remains. A gone unit throws an Error.
      *
      * @param unit      the unit
      * @param imageType the image type, by default that of the unit's main image now
@@ -7120,7 +7318,13 @@ interface DamageDecision {
 }
 
 /**
- * An order issued to a unit ({@link Hooks.onBeforeOrder}). The changes go to the next hook and to the game when the hook returns.
+ * An order a unit receives ({@link Hooks.onBeforeOrder}). The changes go to the next hook and to the game when the hook returns.
+ * <p>
+ * An issued order comes from a command, a trigger, a script or a game routine and replaces the unit's orders or is queued after them. A
+ * command moves its target off ground the unit cannot stand on, and spreads a group around it; {@link OrderDecision.getRequestedPosition}
+ * keeps the position the command asked for. An inserted order ({@link OrderDecision.isInserted}) is put into the unit's queue by a game
+ * routine itself as a follow-up order, such as a computer unit's return to its guard post; a rejected inserted order is left out of the
+ * queue, as when the game has no free order, and reports no {@link Hooks.onOrderIssued}.
  */
 interface OrderDecision {
     /**
@@ -7152,6 +7356,17 @@ interface OrderDecision {
      * @returns true for an order queued with Shift
      */
     isQueued(): boolean;
+
+    /**
+     * @returns true for an order a game routine puts into the unit's queue itself, false for an issued order
+     */
+    isInserted(): boolean;
+
+    /**
+     * @returns the position in map pixels the order was asked for: where the player clicked for a command, else the target position the order
+     *          came with
+     */
+    getRequestedPosition(): Position;
 
     /**
      * @returns the order, as the hooks before changed it
@@ -8016,6 +8231,13 @@ interface ImageScriptTable extends ConstantTable<ImageScript> {
      * frame later.
      */
     readonly Projectile: ImageScript;
+    /**
+     * A unit that turns, without sounds. It needs 15 frame sets of 17 directions: it stands at frame set 0 and walks through the frame sets 1 to
+     * 8, one per frame; an attack aims at frame set 9 and fires the weapon the target needs at frame set 10, a spell the same way; Death shows
+     * the frame sets 11 to 14, two frames each, and ends. The image is clickable. It does not move the unit: give the unit a flingy type that
+     * moves by flingy.dat. With a sheet that has a shadow picture it also creates a shadow image below.
+     */
+    readonly Unit: ImageScript;
 }
 
 /**

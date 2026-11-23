@@ -17,11 +17,12 @@ import org.mozilla.javascript.Scriptable;
 import java.io.IOException;
 
 /**
- * Defines {@code core.screen}, {@code core.world} and {@code core.minimap}: what a map script draws over the game in the local hook
- * {@code onRender}, and the classic screen pixels.
+ * Defines {@code core.screen}, {@code core.world}, {@code core.ground} and {@code core.minimap}: what a map script draws over the game in the
+ * local hook {@code onRender}, and the classic screen pixels.
  * <p>
- * The three namespaces draw into one draw list ({@link ScrDrawList}) in their spaces: {@code core.screen} in interface units over the console,
- * {@code core.world} in map pixels above the units, {@code core.minimap} in map pixels on the minimap. Each has
+ * The four namespaces draw into one draw list ({@link ScrDrawList}) in their spaces: {@code core.screen} in interface units over the console,
+ * {@code core.world} in map pixels above the units, {@code core.ground} in map pixels above the terrain and below the units,
+ * {@code core.minimap} in map pixels on the minimap. Each has
  * {@code fillRectangle(x, y, width, height, argb)}, {@code drawRectangle(x, y, width, height, argb, thickness)},
  * {@code fillCircle(x, y, radius, argb)}, {@code drawCircle(x, y, radius, argb, thickness)},
  * {@code drawLine(x1, y1, x2, y2, argb, thickness)}, {@code drawPoint(x, y, argb)}, {@code drawText(x, y, text, fontId, argb, alignId)},

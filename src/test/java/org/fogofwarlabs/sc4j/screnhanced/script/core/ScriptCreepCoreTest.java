@@ -13,8 +13,8 @@ import java.util.List;
 
 /**
  * Tests {@code core.creep}, {@code core.terrain.hasCreep} and {@code game.map.terrain.creep} in a live melee game: the creep of a Hatchery,
- * creep a script fills next to the Terran base, its removal and recession, the shared and local code checks, and the same game state from the
- * same creep changes.
+ * creep a script fills next to the Terran base and over an area, its removal and recession, the shared and local code checks, and the same game
+ * state from the same creep changes.
  */
 @RequiresInstallation
 @ExtendWith(GameResourcesExtension.class)
@@ -109,6 +109,42 @@ final class ScriptCreepCoreTest {
                                         "RangeError",
                                         "receded",
                                         "local TypeError false"), scenario.getInfoMessages(), scenario.getLines()::toString);
+    }
+
+    @Test
+    void fill_tiles_covers_the_tiles_of_an_area_that_can_take_creep(@NotNull InstallationTestResources resources) throws IOException {
+        LiveScriptGameScenario scenario = LiveScriptGameScenario.startMelee(resources.getGameData(), """
+                                                                                                     var creep = game.map.terrain.creep;
+                                                                                                     function errorOf(body) {
+                                                                                                         try {
+                                                                                                             body();
+                                                                                                             return 'none';
+                                                                                                         } catch (error) {
+                                                                                                             return error.name;
+                                                                                                         }
+                                                                                                     }
+                                                                                                     function onStart() {
+                                                                                                         var commandCenter = game.units.findOne({type: UnitType.TerranCommandCenter});
+                                                                                                         var centerX = Math.floor(commandCenter.getX() / 32);
+                                                                                                         var centerY = Math.floor(commandCenter.getY() / 32);
+                                                                                                         var left = Math.max(0, centerX - 3);
+                                                                                                         var top = Math.max(0, centerY - 2);
+                                                                                                         var area = game.map.locations.get(3);
+                                                                                                         var filled = creep.fillTiles(left, top, 6, 5);
+                                                                                                         area.setBounds(left * 32, top * 32, (left + 6) * 32, (top + 5) * 32);
+                                                                                                         log.info(filled > 0, filled < 30, creep.has(centerX, centerY), creep.fillTiles(left, top, 6, 5), creep.fillTiles(area));
+                                                                                                         log.info(errorOf(function () { creep.fillTiles(-1, 0, 1, 1); }),
+                                                                                                                  errorOf(function () { core.creep.fillTiles(0, 0, game.map.getTileWidth() + 1, 1); }));
+                                                                                                     }
+                                                                                                     function onLocalFrame() {
+                                                                                                         log.info('local ' + errorOf(function () { creep.fillTiles(0, 0, 1, 1); }));
+                                                                                                     }
+                                                                                                     """);
+
+        scenario.runLocalFrame();
+
+        Assertions.assertEquals(List.of("true true false 0 0", "RangeError RangeError", "local TypeError"), scenario.getInfoMessages(),
+                                scenario.getLines()::toString);
     }
 
     @Test

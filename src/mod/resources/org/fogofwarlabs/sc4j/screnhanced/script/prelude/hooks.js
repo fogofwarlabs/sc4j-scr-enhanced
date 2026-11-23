@@ -65,7 +65,7 @@
     var DECISION_HOOK_PREFIX = 'onBefore';
     var TIMER_CALL = 'Timer';
     var CHANNEL_CALL = 'Channel handler';
-    var BOOLEAN_FIELDS = {queued: true, missed: true, hotkey: true};
+    var BOOLEAN_FIELDS = {queued: true, inserted: true, missed: true, hotkey: true};
     var UNIT_FIELDS = ['frame', 'unit', 'unitType', 'owner'];
     var BULLET_FIELDS = ['frame', 'bullet', 'weapon', 'player', 'source', 'target', 'targetPosition'];
     var LOCAL_KEY_FIELDS = ['key', 'modifiers', 'mousePosition'];
@@ -379,13 +379,15 @@
             changes: ['amount', 'cancelled']
         },
         Order: {
-            fields: ['unit', 'unitType', 'owner', 'buildType', 'queued'],
+            fields: ['unit', 'unitType', 'owner', 'buildType', 'queued', 'inserted', 'requestedPosition'],
             read: function (record) {
                 var fields = readUnitFields(record);
 
                 delete fields.frame;
                 fields.buildType = UnitType.get(record.buildType);
                 fields.queued = record.queued;
+                fields.inserted = record.inserted;
+                fields.requestedPosition = createPosition(record.requestedX, record.requestedY);
 
                 return fields;
             },

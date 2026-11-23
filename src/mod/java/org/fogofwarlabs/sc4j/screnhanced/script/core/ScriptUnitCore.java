@@ -2,6 +2,7 @@ package org.fogofwarlabs.sc4j.screnhanced.script.core;
 
 import org.fogofwarlabs.sc4j.base.exception.Exceptions;
 import org.fogofwarlabs.sc4j.scr.content.*;
+import org.fogofwarlabs.sc4j.scr.data.format.terrain.TerrainTileset;
 import org.fogofwarlabs.sc4j.scr.data.type.ScrUnitTypeView;
 import org.fogofwarlabs.sc4j.scr.data.type.constant.UnitTypeFlags;
 import org.fogofwarlabs.sc4j.scr.game.ability.UnitSpells;
@@ -21,6 +22,7 @@ import org.fogofwarlabs.sc4j.scr.game.unit.Unit;
 import org.fogofwarlabs.sc4j.scr.game.unit.UnitPool;
 import org.fogofwarlabs.sc4j.scr.game.unit.UnitStatusFlags;
 import org.fogofwarlabs.sc4j.scr.game.unit.UnitTypeTraitsUtils;
+import org.fogofwarlabs.sc4j.scr.game.unit.finder.UnitPositioning;
 import org.fogofwarlabs.sc4j.scr.game.unit.finder.UnitSpatialIndex;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -54,7 +56,8 @@ import java.util.function.ToIntFunction;
  * {@code disableDoodad} (Set Doodad State), {@code setResources} (Modify Unit Resource Amount, from {@code 0} to {@value #MAXIMUM_RESOURCES};
  * {@code false} for a unit that is no resource container), {@code addHangarCount(id, count)} (Modify Unit Hanger Count: up to {@code count}
  * Interceptors or Scarabs while the hangar takes another one; {@code false} for a unit without a hangar), {@code create(type, owner, x, y)}
- * (Create Unit; the new id or {@code -1}), {@code kill} and {@code remove} (Kill Unit and Remove Unit), {@code damage(id, amount, source,
+ * (Create Unit without its failure messages; the new id or {@code -1}), {@code kill} and {@code remove} (Kill Unit and Remove Unit),
+ * {@code damage(id, amount, source,
  * sourcePlayer)} (the damage routine after armor and shields: the raw amount comes off the hit points and a unit whose hit points run out
  * dies, its death and kill credited to the attacking unit {@code source} and player {@code sourcePlayer}, each {@code -1} for none; a source
  * unit is revealed to the damaged unit's owner as an attacker's is; {@code false} for a subunit), {@code applyDamage(id, amount, source,
@@ -97,12 +100,24 @@ import java.util.function.ToIntFunction;
  * {@code HpGain} and {@code ShieldGain} (raw {@code 1/256} units added each construction frame) and {@code getPreviousHp} (the whole hit points
  * a morphing unit had, which a cancelled Zerg building gives back).
  * <p>
+ * Stats of single units, which last while the unit lives ({@link ScriptUnitStats}): {@code getWeaponRange(id, weapon)} (the maximum range the
+ * simulation uses), {@code getWeaponRangeBonus} and {@code setWeaponRangeBonus} (pixels added to the maximum range of the unit's weapons and of
+ * its turret's), {@code getSpeedPercent} and {@code setSpeedPercent} (the percentage of its movement speeds and acceleration, {@code 100} for the
+ * native ones; a change recalculates the speeds), {@code getMaxHp} (the maximum hit points the game uses, raw {@code 1/256} units) and
+ * {@code setMaxHp} (the unit's own maximum, at least {@code 1}, or {@code -1} for that of its type; the hit points then stay at most the
+ * maximum). {@code findPlacement(type, owner, x, y)} gives the position {@code create} would place the unit at, as {@code [x, y]}, or
+ * {@code null}; shared code only, since the search uses the unit finder's working state.
+ * <p>
  * Sight: {@code getVisibilityFlags} (the players whose sight covers the unit's sprite, one bit per player), {@code getDetectionFlags} (the
  * players that detect the unit), {@code isVisibleTo(id, player)} and {@code isDetectedBy(id, player)} (the visibility system's tests: seen
  * and, when cloaked or burrowed, detected). {@code getAirStrength} and {@code getGroundStrength} are the unit's values for the computer
  * players. The unit finder, in shared code only because its searches use the finder's working state: {@code findInRectangle(left, top,
  * right, bottom)} (the units whose bounds meet the rectangle) and {@code findAtPoint(x, y)} (the units whose bounds hold the point), the live
  * units in the finder's order.
+ * <p>
+ * Ground: {@code canReach(id, x, y)} (the ground reachability test of the routines: a unit that does not move on the ground reaches every
+ * position, a ground unit the positions of its connected area of the ground; a position outside the map throws a {@code RangeError}, and a
+ * game without pathing regions a {@code TypeError}).
  */
 final class ScriptUnitCore {
     /**
@@ -125,6 +140,10 @@ final class ScriptUnitCore {
      * The damage divisor of a full-damage hit.
      */
     private static final int FULL_DAMAGE_DIVISOR = 1;
+    /**
+     * The largest speed percentage of a unit.
+     */
+    private static final int MAXIMUM_SPEED_PERCENT = 10000;
 
     private final @NotNull ScriptGame scriptGame;
 
@@ -228,6 +247,7 @@ final class ScriptUnitCore {
         this.defineVisionFunctions(namespace, global);
         this.defineOrderFunctions(namespace, global);
         this.defineFinderFunctions(namespace, global);
+        this.defineStatFunctions(namespace, global);
     }
 
     private void defineReads(@NotNull Scriptable namespace, @NotNull Scriptable global) {
@@ -848,7 +868,8 @@ final class ScriptUnitCore {
     }
 
     /**
-     * Creates a unit as Create Unit does for one player: a mineral field or a Vespene Geyser belongs to the neutral player.
+     * Creates a unit as Create Unit does for one player, without the messages of a failed creation: a mineral field or a Vespene Geyser belongs to
+     * the neutral player.
      *
      * @return the id of the created unit, or {@code -1} if the routine creates none
      */
@@ -862,9 +883,33 @@ final class ScriptUnitCore {
             owner = PlayerTable.NEUTRAL_PLAYER_ID;
         }
 
-        Unit unit = this.getGame().getTriggerUnitActions().createUnit(type, positionX, positionY, owner, this.scriptGame.getInstructionLimit());
+        Unit unit = this.getGame().getTriggerUnitActions().createUnit(type, positionX, positionY, owner, false,
+                                                                      this.scriptGame.getInstructionLimit());
 
         return unit != null ? unit.getIndex() : ScriptCoreUtils.NO_ID;
+    }
+
+    /**
+     * Finds the position at which {@link #createUnit} places a unit, without creating it.
+     *
+     * @return the array {@code [x, y]}, or {@code null} if the routine finds none
+     */
+    private @Nullable Scriptable findPlacement(@NotNull Context context, @NotNull Scriptable global, @NotNull Object @NotNull [] arguments) {
+        int type = ScriptCoreUtils.requireId("unit type", ScriptCoreUtils.readInteger(arguments, 0), ScrUnitIds.NONE);
+        int owner = ScriptCoreUtils.requireId("player", ScriptCoreUtils.readInteger(arguments, 1), PlayerTable.PLAYER_SLOTS);
+        int positionX = ScriptCoreUtils.readInteger(arguments, 2);
+        int positionY = ScriptCoreUtils.readInteger(arguments, 3);
+        int[] position = new int[UnitPositioning.POSITION_COORDINATES];
+
+        if (this.getUnitTypes().isMineralField(type) || type == ScrUnitIds.RESOURCE_VESPENE_GEYSER) {
+            owner = PlayerTable.NEUTRAL_PLAYER_ID;
+        }
+
+        if (!this.getGame().getTriggerUnitActions().findCreatePosition(type, positionX, positionY, owner, position)) {
+            return null;
+        }
+
+        return context.newArray(global, new Object[]{(double) position[UnitPositioning.X_INDEX], (double) position[UnitPositioning.Y_INDEX]});
     }
 
     /**
@@ -1054,6 +1099,82 @@ final class ScriptUnitCore {
             int y = ScriptCoreUtils.readInteger(arguments, 1);
 
             return this.createLiveIds(context, global, this.requireFinder().findAllAtPoint(x, y));
+        });
+        ScriptCoreUtils.defineFunction(global, namespace, "canReach", 3, (context, scope, thisObject, arguments) -> {
+            Unit unit = this.readUnit(arguments, 0);
+            int width = this.getGame().getMap().getWidth() * TerrainTileset.TILE_SIZE;
+            int height = this.getGame().getMap().getHeight() * TerrainTileset.TILE_SIZE;
+            int x = ScriptCoreUtils.requireId("x", ScriptCoreUtils.readInteger(arguments, 1), width);
+            int y = ScriptCoreUtils.requireId("y", ScriptCoreUtils.readInteger(arguments, 2), height);
+
+            if (this.getGame().getPathSystem().getTerrainContours() == null) {
+                throw ScriptRuntime.typeError("The game has no pathing regions.");
+            }
+
+            return this.getGame().getUnitPositioning().isGroundReachable(unit, x, y);
+        });
+    }
+
+    /**
+     * Defines the stats of single units ({@link ScriptUnitStats}) and the placement search of {@code create}.
+     */
+    private void defineStatFunctions(@NotNull Scriptable namespace, @NotNull Scriptable global) {
+        ScriptUnitStats stats = this.scriptGame.getUnitStats();
+
+        ScriptCoreUtils.defineFunction(global, namespace, "getWeaponRange", 2, (context, scope, thisObject, arguments) -> {
+            Unit unit = this.readUnit(arguments, 0);
+            int weapon = ScriptBulletCore.readWeapon(arguments, 1);
+
+            return (double) this.getGame().getUnitTargeting().getWeaponMaximumRange(unit, weapon);
+        });
+        this.defineRead(namespace, global, "getWeaponRangeBonus", stats::getWeaponRangeBonus);
+        ScriptCoreUtils.defineFunction(global, namespace, "setWeaponRangeBonus", 2, (context, scope, thisObject, arguments) -> {
+            this.scriptGame.checkWritable();
+
+            Unit unit = this.readUnit(arguments, 0);
+            int bonus = ScriptCoreUtils.readInteger(arguments, 1);
+            Unit turret = unit.getSubunit();
+
+            stats.setWeaponRangeBonus(unit, bonus);
+
+            if (turret != null && (this.getUnitTypes().getFlags(turret.getUnitId()) & UnitTypeFlags.SUBUNIT) != 0) {
+                stats.setWeaponRangeBonus(turret, bonus);
+            }
+
+            return Context.getUndefinedValue();
+        });
+        this.defineRead(namespace, global, "getSpeedPercent", stats::getSpeedPercent);
+        ScriptCoreUtils.defineFunction(global, namespace, "setSpeedPercent", 2, (context, scope, thisObject, arguments) -> {
+            this.scriptGame.checkWritable();
+
+            Unit unit = this.readUnit(arguments, 0);
+            int percent = this.readValue(arguments, 1, MAXIMUM_SPEED_PERCENT);
+
+            stats.setSpeedPercent(unit, percent);
+            this.getGame().getEngineGame().getMovement().recalculateSpeed(unit, this.scriptGame.getInstructionLimit());
+
+            return Context.getUndefinedValue();
+        });
+        this.defineRead(namespace, global, "getMaxHp", unit -> this.getGame().getUnitHealth().getMaximumHitPoints(unit));
+        ScriptCoreUtils.defineFunction(global, namespace, "setMaxHp", 2, (context, scope, thisObject, arguments) -> {
+            this.scriptGame.checkWritable();
+
+            Unit unit = this.readUnit(arguments, 0);
+            int hitPoints = ScriptCoreUtils.readInteger(arguments, 1);
+
+            if (hitPoints < 1 && hitPoints != ScriptCoreUtils.NO_ID) {
+                throw ScriptRuntime.rangeError(Exceptions.format("The maximum hit points {0} are below 1.", hitPoints));
+            }
+
+            stats.setMaximumHitPoints(unit, hitPoints == ScriptCoreUtils.NO_ID ? ScriptUnitStats.TYPE_MAXIMUM_HIT_POINTS : hitPoints);
+            this.getGame().getUnitHealth().setHitPoints(unit, unit.getHitPoints(), this.scriptGame.getInstructionLimit());
+
+            return Context.getUndefinedValue();
+        });
+        ScriptCoreUtils.defineFunction(global, namespace, "findPlacement", 4, (context, scope, thisObject, arguments) -> {
+            this.scriptGame.checkShared();
+
+            return this.findPlacement(context, global, arguments);
         });
     }
 

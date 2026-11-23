@@ -43,12 +43,15 @@ import java.util.*;
  * picture as a sheet of frames ({@link PictureSheet}, {@link SheetLayout}): {@code frameCount}, {@code anchorX} and {@code anchorY} are
  * {@code -1} for every whole frame and the frame center, {@code teamColor} and {@code shadow} the names of pictures of the same size or
  * {@code null}, {@code sd} a GRP handle of SD frames of the sheet's frame count and canvas or {@code -1}. It returns a sheet handle, the same for
- * the same name and arguments; a layout that does not fit throws a {@code RangeError}, and so do sheets whose anims together would exceed
- * {@value #ANIMATION_BUDGET_MEBIBYTES} MiB of block-compressed texels in a game. {@code getSheetFrameCount(id)}, {@code getSheetDirections(id)},
+ * the same name and arguments; a layout that does not fit throws a {@code RangeError}. Graphics made of a sheet take one byte per texel and
+ * layer of each distinct sheet frame they show, frames no graphics shows nothing; a call whose graphics would take the anims of a game past
+ * {@value #ANIMATION_BUDGET_MEBIBYTES} MiB throws a {@code RangeError}. {@code getSheetFrameCount(id)}, {@code getSheetDirections(id)},
  * {@code getSheetWidth(id)} and {@code getSheetHeight(id)} read a sheet handle: its frames, the frames of its frame sets and its canvas in map
- * pixels. {@code readText(name)} returns any resource as text: its bytes decoded as UTF-8, a
- * leading byte order mark left out; bytes that are no UTF-8 throw an {@code Error}. The resources are read from the map's script trailer,
- * inflated and checked, when they are first asked for; an image is decoded once and drawn from the same picture afterwards, a text decoded once.
+ * pixels. {@code getSheetFrames(sheet, frameSets)} returns the handle of a sheet's graphics in the order of frame sets, the sheet's frame set for
+ * each frame set an iscript plays (the same handle for the same sheet and frame sets), which every graphics argument takes in place of a sheet
+ * handle. {@code readText(name)} returns any resource as text: its bytes decoded as UTF-8, a leading byte order mark left out; bytes that are no
+ * UTF-8 throw an {@code Error}. The resources are read from the map's script trailer, inflated and checked, when they are first asked for; an
+ * image is decoded once and drawn from the same picture afterwards, a text decoded once.
  * <p>
  * {@code core.graphics}: {@code replaceImage(imageType, grp, hdAnim, hd2Anim)} replaces the graphics of every image of an image type,
  * {@code replaceUnitImage(unit, imageType, grp, hdAnim, hd2Anim)} those of one live unit's images of the type, while the unit lives;
@@ -58,6 +61,12 @@ import java.util.*;
  * HD2 anim, else the HD anim at half size; graphics without an anim draw the GRP in HD too. A unit's replacement wins over that of the image
  * type, and a replacement wins over the GRP and anim pointers that EUD writes give the image. A sheet handle in place of the GRP, with both
  * anims {@code -1}, replaces with the sheet's frames: its GRP quantized to the map's tileset palette and an anim built when first drawn.
+ * <p>
+ * {@code replaceImageShadow(imageType, grp, hdAnim, hd2Anim)} and {@code replaceImageRemains(imageType, grp, hdAnim, hd2Anim)} give graphics to
+ * the shadow and the remains of the sprites whose main image is of the type, {@code replaceUnitShadow(unit, grp, hdAnim, hd2Anim)} and
+ * {@code replaceUnitRemains(unit, grp, hdAnim, hd2Anim)} to those of one live unit, winning over those of the image type; all three handles
+ * {@code -1} draw nothing. {@code restoreImageShadow(imageType)}, {@code restoreImageRemains(imageType)}, {@code restoreUnitShadow(unit)} and
+ * {@code restoreUnitRemains(unit)} take them back ({@link ImageReplacements}).
  * <p>
  * One image of {@code core.image}, while its slot holds it: {@code replaceImageGraphics(image, grp, hdAnim, hd2Anim)} and
  * {@code restoreImageGraphics(image)} (its graphics win over those of its unit and image type); {@code setImageFrame(image, frame)} (a drawn
@@ -95,7 +104,7 @@ final class ScriptGraphicsCore {
     /**
      * The block-compressed bytes of the sheet anims of a game, in mebibytes.
      */
-    private static final int ANIMATION_BUDGET_MEBIBYTES = 128;
+    private static final int ANIMATION_BUDGET_MEBIBYTES = 256;
     private static final int MEBIBYTE_SHIFT = 20;
     private static final long ANIMATION_BUDGET = (long) ANIMATION_BUDGET_MEBIBYTES << MEBIBYTE_SHIFT;
 
@@ -115,6 +124,44 @@ final class ScriptGraphicsCore {
      */
     private static @Nullable String readOptionalString(@NotNull Object @NotNull [] arguments, int index) {
         return index < arguments.length && arguments[index] == null ? null : ScriptCoreUtils.readString(arguments, index);
+    }
+
+    /**
+     * Expands the frame sets a script plays into the sheet frame of each frame of the graphics.
+     *
+     * @param layout    the layout of the sheet
+     * @param frameSets the sheet's frame set for each frame set the script plays, or {@code null} for the sheet's own order
+     * @return the sheet frame of each frame
+     * @throws EcmaError if there is no frame set or a frame set is outside the sheet
+     */
+    static int @NotNull [] expandFrameSets(@NotNull SheetLayout layout, int @Nullable [] frameSets) {
+        int directions = layout.getDirections();
+        int setCount = layout.getFrameCount() / directions;
+        int[] sets = frameSets;
+
+        if (sets == null) {
+            sets = new int[setCount];
+
+            for (int set = 0; set < setCount; set++) {
+                sets[set] = set;
+            }
+        }
+
+        if (sets.length == 0) {
+            throw ScriptRuntime.rangeError("The frame sets are empty.");
+        }
+
+        int[] frames = new int[sets.length * directions];
+
+        for (int index = 0; index < sets.length; index++) {
+            ScriptCoreUtils.requireId("frame set", sets[index], setCount);
+
+            for (int direction = 0; direction < directions; direction++) {
+                frames[index * directions + direction] = sets[index] * directions + direction;
+            }
+        }
+
+        return frames;
     }
 
     /**
@@ -144,6 +191,10 @@ final class ScriptGraphicsCore {
     private final @NotNull Map<String, Integer> soundIds;
     private final @NotNull Map<String, Integer> sheetIds;
     /**
+     * The handles of the graphics of sheets in the order of frame sets ({@code getSheetFrames}), by sheet handle and frames.
+     */
+    private final @NotNull Map<String, Integer> sheetFrameIds;
+    /**
      * The decoded text resources by name.
      */
     private final @NotNull Map<String, String> texts;
@@ -153,14 +204,18 @@ final class ScriptGraphicsCore {
      */
     private final @NotNull Map<PictureSheet, ImageGraphics> sheetGraphics;
     /**
-     * The sheets shared code read and the bytes their anims take, the same on every peer.
+     * The bytes the anims of each graphics of sheet frames take ({@link PictureSheetConverter#countAnimBytes}).
      */
-    private final @NotNull Set<PictureSheet> sharedSheets;
+    private final @NotNull Map<ImageGraphics, Long> sheetGraphicsBytes;
+    /**
+     * The graphics of sheet frames shared code was given and the bytes their anims take, the same on every peer.
+     */
+    private final @NotNull Set<ImageGraphics> sharedSheetGraphics;
     private long sharedSheetBytes;
     /**
-     * The sheets shared or local code read and the bytes their anims take.
+     * The graphics of sheet frames shared or local code was given and the bytes their anims take.
      */
-    private final @NotNull Set<PictureSheet> sheets;
+    private final @NotNull Set<ImageGraphics> countedSheetGraphics;
     private long sheetBytes;
     private @Nullable PictureSheetConverter converter;
 
@@ -179,20 +234,22 @@ final class ScriptGraphicsCore {
         this.spriteCore = spriteCore;
         this.resources  = resources;
 
-        this.handles  = new ArrayList<>();
-        this.grpIds   = new HashMap<>();
-        this.animIds  = new HashMap<>();
-        this.imageIds = new HashMap<>();
-        this.soundIds = new HashMap<>();
-        this.sheetIds = new HashMap<>();
-        this.texts    = new HashMap<>();
+        this.handles       = new ArrayList<>();
+        this.grpIds        = new HashMap<>();
+        this.animIds       = new HashMap<>();
+        this.imageIds      = new HashMap<>();
+        this.soundIds      = new HashMap<>();
+        this.sheetIds      = new HashMap<>();
+        this.sheetFrameIds = new HashMap<>();
+        this.texts         = new HashMap<>();
 
-        this.sheetGraphics    = new HashMap<>();
-        this.sharedSheets     = new HashSet<>();
-        this.sharedSheetBytes = 0;
-        this.sheets           = new HashSet<>();
-        this.sheetBytes       = 0;
-        this.converter        = null;
+        this.sheetGraphics        = new HashMap<>();
+        this.sheetGraphicsBytes   = new HashMap<>();
+        this.sharedSheetGraphics  = new HashSet<>();
+        this.sharedSheetBytes     = 0;
+        this.countedSheetGraphics = new HashSet<>();
+        this.sheetBytes           = 0;
+        this.converter            = null;
     }
 
     /**
@@ -271,9 +328,22 @@ final class ScriptGraphicsCore {
             ImageGrp sd = this.readHandle(arguments, SHEET_SD_ARGUMENT, ImageGrp.class, "GRP");
             String key = name + '|' + Arrays.toString(layout) + '|' + teamColor + '|' + shadow + '|' + (sd == null ? null : sd.getName());
 
-            int id = this.findHandle(this.sheetIds, key, "sheet", () -> this.readSheet(name, layout, teamColor, shadow, sd));
+            return (double) this.findHandle(this.sheetIds, key, "sheet", () -> this.readSheet(name, layout, teamColor, shadow, sd));
+        });
+        ScriptCoreUtils.defineFunction(global, namespace, "getSheetFrames", 2, (context, scope, thisObject, arguments) -> {
+            int sheetId = ScriptCoreUtils.readInteger(arguments, 0);
+            PictureSheet sheet = this.readSheet(arguments, 0);
+            int[] frames = expandFrameSets(sheet.getLayout(), ScriptCoreUtils.readIntegers(arguments, 1));
+            String key = sheetId + "|" + Arrays.toString(frames);
+            Integer id = this.sheetFrameIds.get(key);
 
-            this.countSheet((PictureSheet) this.handles.get(id));
+            if (id == null) {
+                id = this.handles.size();
+                this.handles.add(this.createSheetGraphics(sheet, frames, this.createGrp(sheet, frames)));
+                this.sheetFrameIds.put(key, id);
+            } else {
+                this.countSheetGraphics(sheet, (ImageGraphics) this.handles.get(id));
+            }
 
             return (double) id;
         });
@@ -378,14 +448,22 @@ final class ScriptGraphicsCore {
      * @throws EcmaError if the GRP of the shadow picture cannot be made or a GRP cannot be read
      */
     @NotNull ImageGraphics createSheetGraphics(@NotNull PictureSheet sheet, int @NotNull [] frames, byte @NotNull [] grp) {
+        ImageGraphics graphics;
+
         try {
             byte[] shadowGrp = sheet.hasShadow() ? this.getConverter().createShadowGrp(sheet, frames) : null;
 
-            return this.getReplacements().createSheetGraphics(sheet, frames, grp, shadowGrp);
+            graphics = this.getReplacements().createSheetGraphics(sheet, frames, grp, shadowGrp);
         } catch (IOException | IllegalArgumentException exception) {
             throw ScriptRuntime.constructError(ERROR_NAME, Exceptions.format("The sheet {0} cannot be converted: {1}", sheet.getName(),
                                                                              exception.getMessage()));
         }
+
+        this.sheetGraphicsBytes.put(graphics, PictureSheetConverter.countAnimBytes(sheet.getLayout(), frames, sheet.hasTeamColor(),
+                                                                                   sheet.hasShadow()));
+        this.countSheetGraphics(sheet, graphics);
+
+        return graphics;
     }
 
     /**
@@ -456,6 +534,54 @@ final class ScriptGraphicsCore {
             Unit unit = this.unitCore.readUnit(arguments, 0);
 
             this.getReplacements().restoreUnitImage(unit, this.readImageType(arguments, 1));
+
+            return Context.getUndefinedValue();
+        });
+        ScriptCoreUtils.defineFunction(global, namespace, "replaceImageShadow", 4, (context, scope, thisObject, arguments) -> {
+            int imageType = this.readImageType(arguments, 0);
+
+            this.getReplacements().setTypeShadow(imageType, this.readPartGraphics(arguments, 1));
+
+            return Context.getUndefinedValue();
+        });
+        ScriptCoreUtils.defineFunction(global, namespace, "restoreImageShadow", 1, (context, scope, thisObject, arguments) -> {
+            this.getReplacements().setTypeShadow(this.readImageType(arguments, 0), null);
+
+            return Context.getUndefinedValue();
+        });
+        ScriptCoreUtils.defineFunction(global, namespace, "replaceImageRemains", 4, (context, scope, thisObject, arguments) -> {
+            int imageType = this.readImageType(arguments, 0);
+
+            this.getReplacements().setTypeRemains(imageType, this.readPartGraphics(arguments, 1));
+
+            return Context.getUndefinedValue();
+        });
+        ScriptCoreUtils.defineFunction(global, namespace, "restoreImageRemains", 1, (context, scope, thisObject, arguments) -> {
+            this.getReplacements().setTypeRemains(this.readImageType(arguments, 0), null);
+
+            return Context.getUndefinedValue();
+        });
+        ScriptCoreUtils.defineFunction(global, namespace, "replaceUnitShadow", 4, (context, scope, thisObject, arguments) -> {
+            Unit unit = this.unitCore.readUnit(arguments, 0);
+
+            this.getReplacements().setUnitShadow(unit, this.readPartGraphics(arguments, 1));
+
+            return Context.getUndefinedValue();
+        });
+        ScriptCoreUtils.defineFunction(global, namespace, "restoreUnitShadow", 1, (context, scope, thisObject, arguments) -> {
+            this.getReplacements().setUnitShadow(this.unitCore.readUnit(arguments, 0), null);
+
+            return Context.getUndefinedValue();
+        });
+        ScriptCoreUtils.defineFunction(global, namespace, "replaceUnitRemains", 4, (context, scope, thisObject, arguments) -> {
+            Unit unit = this.unitCore.readUnit(arguments, 0);
+
+            this.getReplacements().setUnitRemains(unit, this.readPartGraphics(arguments, 1));
+
+            return Context.getUndefinedValue();
+        });
+        ScriptCoreUtils.defineFunction(global, namespace, "restoreUnitRemains", 1, (context, scope, thisObject, arguments) -> {
+            this.getReplacements().setUnitRemains(this.unitCore.readUnit(arguments, 0), null);
 
             return Context.getUndefinedValue();
         });
@@ -536,7 +662,8 @@ final class ScriptGraphicsCore {
 
 
     /**
-     * Reads the three handle arguments of graphics: a GRP, an HD anim and an HD2 anim, each {@code -1} for none.
+     * Reads the three handle arguments of graphics: a GRP, an HD anim and an HD2 anim, each {@code -1} for none; a sheet handle or a handle of
+     * sheet frames ({@code getSheetFrames}) in place of the GRP, with both anims {@code -1}.
      *
      * @throws EcmaError if an argument is not an integer or names no handle of its kind, all three are {@code -1}, the HD anim is an HD2 anim or the HD2 anim an HD anim
      */
@@ -544,13 +671,13 @@ final class ScriptGraphicsCore {
         int first = ScriptCoreUtils.readInteger(arguments, index);
         Object handle = first >= 0 && first < this.handles.size() ? this.handles.get(first) : null;
 
-        if (handle instanceof PictureSheet sheet) {
+        if (handle instanceof PictureSheet || handle instanceof ImageGraphics) {
             if (ScriptCoreUtils.readInteger(arguments, index + 1) != ScriptCoreUtils.NO_ID ||
                 ScriptCoreUtils.readInteger(arguments, index + 2) != ScriptCoreUtils.NO_ID) {
                 throw ScriptRuntime.rangeError("A sheet is given without anims.");
             }
 
-            return this.findSheetGraphics(sheet);
+            return handle instanceof ImageGraphics graphics ? graphics : this.findSheetGraphics((PictureSheet) handle);
         }
 
         ImageGrp grp = this.readHandle(arguments, index, ImageGrp.class, "GRP");
@@ -562,6 +689,21 @@ final class ScriptGraphicsCore {
         } catch (IllegalArgumentException exception) {
             throw ScriptRuntime.rangeError(exception.getMessage());
         }
+    }
+
+    /**
+     * Reads the three handle arguments of the graphics of a shadow or of remains ({@link #readGraphics}); all three {@code -1} draw nothing.
+     *
+     * @throws EcmaError if an argument is not an integer or names no handle of its kind, the HD anim is an HD2 anim or the HD2 anim an HD anim
+     */
+    private @NotNull ImageGraphics readPartGraphics(@NotNull Object @NotNull [] arguments, int index) {
+        if (ScriptCoreUtils.readInteger(arguments, index) == ScriptCoreUtils.NO_ID &&
+            ScriptCoreUtils.readInteger(arguments, index + 1) == ScriptCoreUtils.NO_ID &&
+            ScriptCoreUtils.readInteger(arguments, index + 2) == ScriptCoreUtils.NO_ID) {
+            return ImageGraphics.HIDDEN;
+        }
+
+        return this.readGraphics(arguments, index);
     }
 
     /**
@@ -579,32 +721,35 @@ final class ScriptGraphicsCore {
 
             graphics = this.createSheetGraphics(sheet, frames, this.createGrp(sheet, frames));
             this.sheetGraphics.put(sheet, graphics);
+        } else {
+            this.countSheetGraphics(sheet, graphics);
         }
 
         return graphics;
     }
 
     /**
-     * Counts the anim bytes of a sheet a call returns, once per sheet: shared code counts the sheets shared code read, so its budget check is the
-     * same on every peer; local code counts every sheet.
+     * Counts the anim bytes of graphics of sheet frames a call gives, once per graphics, by the distinct sheet frames they show, so the frames of a
+     * sheet no graphics shows take nothing: shared code counts the graphics shared code was given, so its budget check is the same on every
+     * peer; local code counts all graphics.
      *
      * @throws EcmaError if the anims would exceed the budget
      */
-    private void countSheet(@NotNull PictureSheet sheet) {
-        long bytes = PictureSheetConverter.countAnimBytes(sheet.getLayout(), sheet.hasTeamColor(), sheet.hasShadow());
+    private void countSheetGraphics(@NotNull PictureSheet sheet, @NotNull ImageGraphics graphics) {
+        long bytes = this.sheetGraphicsBytes.get(graphics);
         boolean local = this.scriptGame.isLocal();
 
-        if (local ? !this.sheets.contains(sheet) && this.sheetBytes + bytes > ANIMATION_BUDGET
-                  : !this.sharedSheets.contains(sheet) && this.sharedSheetBytes + bytes > ANIMATION_BUDGET) {
+        if (local ? !this.countedSheetGraphics.contains(graphics) && this.sheetBytes + bytes > ANIMATION_BUDGET
+                  : !this.sharedSheetGraphics.contains(graphics) && this.sharedSheetBytes + bytes > ANIMATION_BUDGET) {
             throw ScriptRuntime.rangeError(Exceptions.format("The sheet {0} would take the anims of the map past {1} MiB.", sheet.getName(),
                                                              ANIMATION_BUDGET_MEBIBYTES));
         }
 
-        if (!local && this.sharedSheets.add(sheet)) {
+        if (!local && this.sharedSheetGraphics.add(graphics)) {
             this.sharedSheetBytes += bytes;
         }
 
-        if (this.sheets.add(sheet)) {
+        if (this.countedSheetGraphics.add(graphics)) {
             this.sheetBytes += bytes;
         }
     }

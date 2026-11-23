@@ -1,6 +1,7 @@
 package org.fogofwarlabs.sc4j.screnhanced.graphics;
 
 import org.fogofwarlabs.sc4j.base.binary.LittleEndianUtils;
+import org.fogofwarlabs.sc4j.engine.resource.graphics.Picture;
 import org.fogofwarlabs.sc4j.scr.data.format.terrain.TerrainTileset;
 import org.fogofwarlabs.sc4j.scr.game.extension.ScrGamePlugin;
 import org.fogofwarlabs.sc4j.scr.game.trigger.eud.ClassicMemoryView;
@@ -9,14 +10,19 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.function.Supplier;
 
 /**
  * The classic terrain pictures of one game: the minitile pixels ({@code .vr4}) and the megatile minitile references ({@code .vx4}) the classic
  * game kept in memory at the addresses its tileset pointers hold. A write to them changes the picture of every megatile that shows the written
  * minitile or whose references were written; the megatile draws the picture composed from the written and installed data.
  * <p>
+ * The terrain pictures a simulation plugin of the game replaces ({@link TerrainReplacements}) win over the written data: the classic graphics
+ * draw a replaced megatile's classic pixels where they cover it, over the written or installed picture, and the HD and HD2 graphics draw its
+ * picture over the installed HD tile ({@link #findTerrainTilePicture}).
+ * <p>
  * The pictures are presentation: the plugin observes the writes through the game's memory view and never changes the game. The installed data is
- * read on the first write.
+ * read on the first write or the first drawn replacement.
  */
 public final class ClassicTerrainGraphics implements ScrGamePlugin {
     /**
@@ -83,7 +89,23 @@ public final class ClassicTerrainGraphics implements ScrGamePlugin {
         byte @NotNull [] readFile(@NotNull String extension) throws IOException;
     }
 
+    /**
+     * A classic picture of a replaced megatile: the replacement's pixels over the base picture.
+     */
+    private static final class ReplacedPicture {
+        private final byte @Nullable [] base;
+        private final byte @NotNull [] pixels;
+        private final byte @NotNull [] picture;
+
+        private ReplacedPicture(byte @Nullable [] base, byte @NotNull [] pixels, byte @NotNull [] picture) {
+            this.base    = base;
+            this.pixels  = pixels;
+            this.picture = picture;
+        }
+    }
+
     private final @NotNull InstalledTileset installed;
+    private final @NotNull Supplier<@Nullable TerrainReplacements> replacementSource;
 
     private int minitileBase;
     private int megatileBase;
@@ -107,12 +129,24 @@ public final class ClassicTerrainGraphics implements ScrGamePlugin {
     private boolean changed;
 
     /**
+     * The terrain pictures of the game's simulation plugin, {@code null} until it is found.
+     */
+    private @Nullable TerrainReplacements replacements;
+    /**
+     * The classic pictures of the replaced megatiles, as of their last composition.
+     */
+    private final @NotNull Map<Integer, ReplacedPicture> replacedPictures;
+
+    /**
      * Creates a {@link ClassicTerrainGraphics} instance over a game's installed tileset.
      *
-     * @param installed the installed tileset files
+     * @param installed         the installed tileset files
+     * @param replacementSource the terrain pictures a simulation plugin of the game replaces, or {@code null} while there are none; asked until
+     *                          it gives them
      */
-    public ClassicTerrainGraphics(@NotNull InstalledTileset installed) {
-        this.installed = installed;
+    public ClassicTerrainGraphics(@NotNull InstalledTileset installed, @NotNull Supplier<@Nullable TerrainReplacements> replacementSource) {
+        this.installed         = installed;
+        this.replacementSource = replacementSource;
 
         this.minitileBase = 0;
         this.megatileBase = 0;
@@ -125,6 +159,9 @@ public final class ClassicTerrainGraphics implements ScrGamePlugin {
         this.megatiles = new HashMap<>();
         this.pictures  = new HashMap<>();
         this.changed   = false;
+
+        this.replacements     = null;
+        this.replacedPictures = new HashMap<>();
     }
 
     /**
@@ -148,7 +185,7 @@ public final class ClassicTerrainGraphics implements ScrGamePlugin {
 
     /**
      * Finds the picture a megatile draws instead of its installed one: the picture composed from the written data, if the megatile shows a written
-     * minitile or its references were written.
+     * minitile or its references were written, with the classic pixels of a replaced megatile over it.
      *
      * @param megatile the megatile index of a drawn tile
      * @return the palette indices, the same array while the picture is unchanged, or {@code null} for the installed picture
@@ -160,7 +197,71 @@ public final class ClassicTerrainGraphics implements ScrGamePlugin {
             this.compose();
         }
 
-        return this.pictures.get(megatile);
+        byte[] written = this.pictures.get(megatile);
+        TerrainReplacements replaced = this.findReplacements();
+
+        if (replaced == null || replaced.isEmpty()) {
+            return written;
+        }
+
+        byte[] pixels = replaced.findPixels(megatile);
+        byte[] coverage = replaced.findCoverage(megatile);
+
+        if (pixels == null || coverage == null) {
+            return written;
+        }
+
+        ReplacedPicture previous = this.replacedPictures.get(megatile);
+
+        if (previous != null && previous.base == written && previous.pixels == pixels) {
+            return previous.picture;
+        }
+
+        byte[] picture = written != null ? written.clone() : this.composeInstalledMegatile(megatile);
+
+        for (int index = 0; index < picture.length; index++) {
+            if (coverage[index] != 0) {
+                picture[index] = pixels[index];
+            }
+        }
+
+        this.replacedPictures.put(megatile, new ReplacedPicture(written, pixels, picture));
+
+        return picture;
+    }
+
+    /**
+     * Finds the picture a megatile draws instead of its installed one in the HD and HD2 graphics: the picture of a replaced megatile.
+     *
+     * @param megatile the megatile index of a drawn tile
+     * @return the picture, the same instance while it is unchanged, or {@code null} if the megatile is not replaced
+     */
+    @Override
+    public @Nullable Picture findTerrainTilePicture(int megatile) {
+        TerrainReplacements replaced = this.findReplacements();
+
+        return replaced == null || replaced.isEmpty() ? null : replaced.findPicture(megatile);
+    }
+
+    /**
+     * @return the terrain pictures of the game's simulation plugin, or {@code null} while there are none
+     */
+    private @Nullable TerrainReplacements findReplacements() {
+        TerrainReplacements replaced = this.replacements;
+
+        if (replaced == null) {
+            replaced          = this.replacementSource.get();
+            this.replacements = replaced;
+        }
+
+        return replaced;
+    }
+
+    /**
+     * Composes a megatile's installed picture, or a picture of index {@code 0} when the installed data cannot be read.
+     */
+    private byte @NotNull [] composeInstalledMegatile(int megatile) {
+        return this.loadInstalled() ? this.composeMegatile(megatile) : new byte[TerrainTileset.TILE_SIZE * TerrainTileset.TILE_SIZE];
     }
 
     private static int readPointer(@NotNull ClassicMemoryView memory, int address) {

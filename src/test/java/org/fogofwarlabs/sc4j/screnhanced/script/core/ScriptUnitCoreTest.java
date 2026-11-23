@@ -14,7 +14,8 @@ import java.util.List;
 /**
  * Tests {@code core.unit} and the {@code Unit} objects of the prelude in a live melee game: reading the start units, shown and raw hit
  * points, creating and killing through the trigger routines, damage with and without the weapon damage routine, one object per unit with one
- * {@code timers} object, {@code exists()} after death, and the doodad state, resource amount and hangar routines.
+ * {@code timers} object, {@code exists()} after death, the doodad state, resource amount and hangar routines, and the quiet creation with
+ * its placement search.
  */
 @RequiresInstallation
 @ExtendWith(GameResourcesExtension.class)
@@ -95,6 +96,26 @@ final class ScriptUnitCoreTest {
                                         "11 true true",
                                         "true",
                                         "RangeError"), scenario.getInfoMessages(), scenario.getLines()::toString);
+    }
+
+    @Test
+    void units_create_without_messages_where_the_placement_search_finds_room(@NotNull InstallationTestResources resources) throws IOException {
+        LiveScriptGameScenario scenario = LiveScriptGameScenario.startMelee(resources.getGameData(), """
+                                                                                                     function onStart() {
+                                                                                                         var human = game.players.getHumans()[0];
+                                                                                                         var commandCenter = game.units.findOne({type: UnitType.TerranCommandCenter, owner: human});
+                                                                                                         var spot = commandCenter.getPosition();
+                                                                                                         var placement = game.units.findPlacement(UnitType.TerranMarine, human, spot);
+                                                                                                         var marine = game.units.create(UnitType.TerranMarine, human, spot);
+                                                                                                         log.info(placement.x === marine.getX(), placement.y === marine.getY(), placement.x !== spot.x || placement.y !== spot.y);
+                                                                                                         log.info(game.units.findPlacement(UnitType.TerranCommandCenter, human, spot),
+                                                                                                                  game.units.create(UnitType.TerranCommandCenter, human, spot),
+                                                                                                                  game.units.create(UnitType.SpecialFloorGunTrap, human, spot));
+                                                                                                     }
+                                                                                                     """);
+
+        Assertions.assertEquals(List.of("true true true", "null null null"), scenario.getInfoMessages(), scenario.getLines()::toString);
+        Assertions.assertEquals(0, scenario.getGame().getInterfaceLink().getCommandErrorEvents().getCount(), "a failed creation shows no message");
     }
 
     @Test

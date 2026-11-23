@@ -2,6 +2,7 @@ package org.fogofwarlabs.sc4j.screnhanced.graphics;
 
 import org.fogofwarlabs.sc4j.base.binary.LittleEndianUtils;
 import org.fogofwarlabs.sc4j.engine.resource.graphics.Picture;
+import org.fogofwarlabs.sc4j.engine.resource.graphics.PixelLayer;
 import org.fogofwarlabs.sc4j.engine.resource.graphics.SpriteSheet;
 import org.fogofwarlabs.sc4j.scr.game.extension.ScrConsoleArt;
 import org.fogofwarlabs.sc4j.scr.game.extension.ScrConsolePlacement;
@@ -35,7 +36,8 @@ import java.util.function.Supplier;
  * <p>
  * The console settings of the game's map script ({@link ConsoleSettings}) are merged item by item: what the script set for an item wins over
  * EUD memory, and EUD memory still drives every item the script never set. The items are the console as a whole (the script can hide it), each
- * dialog's visibility (a script setting wins over a dialog that EUD memory hides by its picture size), each dialog's position (wins over the
+ * dialog's visibility (a script setting wins over a dialog that EUD memory hides by its picture size; while the script shows only the minimap,
+ * every dialog but the minimap and the text box whose visibility it did not set is hidden), each dialog's position (wins over the
  * dialog's written rectangle), each control's visibility and position (win over the control's flags and rectangle), each console art file
  * ({@link ScrConsoleArt}; a script picture is drawn over the installed file's place, and a replaced frame file of the shown graphics shows the
  * whole frame instead of the transparency-masked art, the transparency still masking the dialogs) and each resource icon (a script picture wins
@@ -63,6 +65,11 @@ public final class ClassicConsoleGraphics implements ScrGamePlugin {
     private static final int BYTE_MASK = 0xFF;
     private static final int TABLE_ROW_SIZE = 2;
     private static final int TRANSPARENCY_PAIR_SIZE = 2;
+    /**
+     * The console art drawn while the console shows only the minimap: one transparent pixel, stretched over the art's place, which the console is
+     * not hit at.
+     */
+    private static final @NotNull Picture NO_ART = new Picture(1, 1, PixelLayer.ofRgba(new int[1]));
 
     /**
      * One observed dialog or console area owner: its loaded and current bytes, the bytes of its picture buffer and what the map wrote.
@@ -288,7 +295,7 @@ public final class ClassicConsoleGraphics implements ScrGamePlugin {
      * Finds the picture the console draws instead of an installed art file of the shown race console, over the file's place and size. The same
      * picture is returned while the art is unchanged.
      * <p>
-     * The picture is the one the map script set for the file.
+     * The picture is the one the map script set for the file, else a transparent picture while the console shows only the minimap.
      *
      * @param art the art file
      * @return the picture, or {@code null} for the installed file
@@ -296,8 +303,9 @@ public final class ClassicConsoleGraphics implements ScrGamePlugin {
     @Override
     public @Nullable Picture findConsoleArt(@NotNull ScrConsoleArt art) {
         ConsoleSettings current = this.findSettings();
+        Picture picture = current == null ? null : current.getArt(art);
 
-        return current == null ? null : current.getArt(art);
+        return picture == null && current != null && current.isMinimapOnly() ? NO_ART : picture;
     }
 
     /**
@@ -362,9 +370,9 @@ public final class ClassicConsoleGraphics implements ScrGamePlugin {
 
     /**
      * Brings the placement to the written dialogs, controls, transparency and pictures and to the script's dialog settings: the minimap size and
-     * the dialog anchors are the script's; a dialog is hidden when the script hid it, or when it did not set its visibility and EUD memory gave
-     * it a picture; a shown dialog is moved to the script's position, else to its written rectangle, else restored to its installed place; its
-     * controls are placed the same way ({@link #placeControls}).
+     * the dialog anchors are the script's; a dialog is hidden when the script hid it, or when it did not set its visibility and the console shows
+     * only the minimap (but for the minimap and the text box) or EUD memory gave it a picture; a shown dialog is moved to the script's position,
+     * else to its written rectangle, else restored to its installed place; its controls are placed the same way ({@link #placeControls}).
      *
      * @param current the console settings of the map script, or {@code null} without a script
      */
@@ -378,7 +386,8 @@ public final class ClassicConsoleGraphics implements ScrGamePlugin {
 
             boolean hidden = current != null && current.isDialogVisibilitySet(dialog)
                              ? !current.isDialogVisible(dialog)
-                             : observed != null && observed.pictureWritten;
+                             : current != null && current.isMinimapOnly() && dialog != ScrConsolePlacement.Dialog.MINIMAP &&
+                               dialog != ScrConsolePlacement.Dialog.TEXT_BOX || observed != null && observed.pictureWritten;
 
             if (hidden) {
                 this.placement.hideDialog(dialog);

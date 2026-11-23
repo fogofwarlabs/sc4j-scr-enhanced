@@ -26,7 +26,8 @@ import java.util.List;
  * Changes the tiles of a running game's map for {@code core.terrain} ({@link ScriptTerrainCore}), so that the game continues as on a map that
  * had the new tiles from the start, as far as the game's routines allow.
  * <p>
- * {@link #setTile} queues a change and {@link #getTile} reads the tile the map has after the queued changes. The script's simulation plugin
+ * {@link #setTile} queues a change and {@link #getTile} reads the tile the map has after the queued changes; {@link #fillTiles},
+ * {@link #copyTiles} and {@link #setTiles} queue the changes of a rectangle of tiles. The script's simulation plugin
  * applies the queued changes ({@link #applyChanges}) at the end of its frame start, before the triggers, the last change of a tile winning, so
  * every peer and every replay changes the same tiles at the same point of the same frame. Applying the changes:
  * <ul>
@@ -37,9 +38,10 @@ import java.util.List;
  * <li>builds the terrain contours and regions of the whole map again from the terrain without creep, through the loader's
  * {@link TerrainContours#create}, keeps the footprint controls of the previous contours, and makes every unit that follows a path search a
  * new one;</li>
- * <li>moves each ground unit that the terrain under it no longer carries to a free walkable position near it
- * ({@link UnitRelocation#displace}), in the order of the unit list, and finishes the order of a moved
- * completed unit, as Move Unit does.</li>
+ * <li>moves each ground unit that the terrain under it no longer carries to the nearest free walkable position, searched in growing rectangles
+ * around it over the whole map ({@link UnitRelocation#displace(Unit, int, int, int, int)}), in the order of the unit list, and restarts the
+ * current order of a moved completed unit whose order can be interrupted (the order's first state), so a unit that was moving keeps moving to its
+ * order's target; the queued orders stay.</li>
  * </ul>
  * The computer players and the resource areas keep the regions the game started with ({@link PathSystem#getStartTerrainContours}).
  */
@@ -123,6 +125,90 @@ final class ScriptTerrainChanges {
     }
 
     /**
+     * Queues a change of every tile of a rectangle of the map to one tile WORD, which the next frame start applies.
+     *
+     * @param left           the left column in tiles
+     * @param top            the top row in tiles
+     * @param width          the width in tiles
+     * @param height         the height in tiles
+     * @param tileIdentifier the new tile WORD ({@link #isValidTile})
+     * @throws IndexOutOfBoundsException if the rectangle leaves the map
+     * @throws IllegalArgumentException  if the tile WORD names no tile of the map's tileset
+     * @throws IllegalStateException     if the map has no expanded terrain flags or overlays, or the tileset cannot be loaded
+     */
+    void fillTiles(int left, int top, int width, int height, int tileIdentifier) {
+        this.checkRectangle(left, top, width, height);
+
+        if (!this.isValidTile(tileIdentifier)) {
+            throw Exceptions.newIllegalArgumentException("The tile {0} is not a tile of the tileset of the map.", tileIdentifier);
+        }
+
+        for (int row = 0; row < height; row++) {
+            for (int column = 0; column < width; column++) {
+                this.setTile(left + column, top + row, tileIdentifier);
+            }
+        }
+    }
+
+    /**
+     * Queues the changes that copy the tiles of a rectangle of the map, as {@link #getTile} reads them, onto the rectangle of the same size at
+     * another place; the rectangles may overlap.
+     *
+     * @param sourceLeft the left column of the copied rectangle in tiles
+     * @param sourceTop  the top row of the copied rectangle in tiles
+     * @param width      the width in tiles
+     * @param height     the height in tiles
+     * @param targetLeft the left column of the changed rectangle in tiles
+     * @param targetTop  the top row of the changed rectangle in tiles
+     * @throws IndexOutOfBoundsException if a rectangle leaves the map
+     * @throws IllegalStateException     if the map has no expanded terrain flags or overlays, or the tileset cannot be loaded
+     */
+    void copyTiles(int sourceLeft, int sourceTop, int width, int height, int targetLeft, int targetTop) {
+        this.checkRectangle(sourceLeft, sourceTop, width, height);
+        this.checkRectangle(targetLeft, targetTop, width, height);
+
+        int[] tiles = new int[width * height];
+
+        for (int index = 0; index < tiles.length; index++) {
+            tiles[index] = this.getTile(sourceLeft + index % width, sourceTop + index / width);
+        }
+
+        this.setTiles(targetLeft, targetTop, width, height, tiles);
+    }
+
+    /**
+     * Queues a change of every tile of a rectangle of the map, which the next frame start applies; nothing is queued when a tile WORD names no
+     * tile of the map's tileset.
+     *
+     * @param left            the left column in tiles
+     * @param top             the top row in tiles
+     * @param width           the width in tiles
+     * @param height          the height in tiles
+     * @param tileIdentifiers the new tile WORDs of the rectangle, row by row from the top left tile
+     * @throws IndexOutOfBoundsException if the rectangle leaves the map
+     * @throws IllegalArgumentException  if the number of tile WORDs is not the number of tiles of the rectangle or a tile WORD names no tile of the tileset
+     * @throws IllegalStateException     if the map has no expanded terrain flags or overlays, or the tileset cannot be loaded
+     */
+    void setTiles(int left, int top, int width, int height, int @NotNull [] tileIdentifiers) {
+        this.checkRectangle(left, top, width, height);
+
+        if (tileIdentifiers.length != width * height) {
+            throw Exceptions.newIllegalArgumentException("A rectangle of {0}x{1} tiles takes {2} tiles, not {3}.", width, height, width * height,
+                                                         tileIdentifiers.length);
+        }
+
+        for (int tileIdentifier : tileIdentifiers) {
+            if (!this.isValidTile(tileIdentifier)) {
+                throw Exceptions.newIllegalArgumentException("The tile {0} is not a tile of the tileset of the map.", tileIdentifier);
+            }
+        }
+
+        for (int index = 0; index < tileIdentifiers.length; index++) {
+            this.setTile(left + index % width, top + index / width, tileIdentifiers[index]);
+        }
+    }
+
+    /**
      * @return {@code true} if a change is queued, {@code false} otherwise
      */
     boolean hasPendingChanges() {
@@ -162,11 +248,10 @@ final class ScriptTerrainChanges {
      * Applies the queued changes: the tiles, then the contours and regions of the whole map, the paths and the ground units on terrain that no
      * longer carries them. Nothing happens without a queued change.
      *
-     * @param instructionLimit the instruction limit of the animation programs an order change runs
      * @throws IllegalStateException         if the tileset cannot be loaded
      * @throws UnsupportedOperationException if the contours of the changed map cannot be built
      */
-    void applyChanges(int instructionLimit) {
+    void applyChanges() {
         int[] pending = this.pendingTiles;
 
         if (pending == null || this.pendingCount == 0) {
@@ -217,7 +302,7 @@ final class ScriptTerrainChanges {
 
         contours.copyFootprintControls(previous);
         paths.replaceTerrainContours(contours);
-        this.updateUnits(instructionLimit);
+        this.updateUnits();
     }
 
     /**
@@ -241,9 +326,10 @@ final class ScriptTerrainChanges {
 
     /**
      * Makes every unit that follows a path search a new one, then moves the ground units that the terrain no longer carries, found first, in the
-     * order of the unit list.
+     * order of the unit list, to the nearest free walkable position on the map, and restarts the interruptible current order of a moved completed
+     * unit.
      */
-    private void updateUnits(int instructionLimit) {
+    private void updateUnits() {
         UnitPool pool = this.game.getUnitSystem().getUnitPool();
 
         if (pool == null) {
@@ -271,9 +357,14 @@ final class ScriptTerrainChanges {
             }
         }
 
+        GameMap map = this.game.getMap();
+        int right = map.getWidth() * TerrainTileset.TILE_SIZE - 1;
+        int bottom = map.getHeight() * TerrainTileset.TILE_SIZE - 1;
+
         for (Unit unit : displaced) {
-            if (this.game.getUnitRelocation().displace(unit) && (unit.getStatus() & UnitStatusFlags.COMPLETED) != 0) {
-                this.game.getOrders().finishOrder(unit, instructionLimit);
+            if (this.game.getUnitRelocation().displace(unit, 0, 0, right, bottom) &&
+                (unit.getStatus() & (UnitStatusFlags.COMPLETED | UnitStatusFlags.ORDER_NOT_INTERRUPTIBLE)) == UnitStatusFlags.COMPLETED) {
+                unit.setPrimaryOrderState(0);
             }
         }
     }
@@ -292,6 +383,19 @@ final class ScriptTerrainChanges {
         }
 
         return !this.game.getUnitPositioning().isTerrainPlacementWalkable(unit.getUnitId(), sprite.getX(), sprite.getY());
+    }
+
+    /**
+     * Checks that a rectangle of tiles lies inside the map.
+     *
+     * @throws IndexOutOfBoundsException if the rectangle leaves the map or has a negative size
+     */
+    private void checkRectangle(int left, int top, int width, int height) {
+        GameMap map = this.game.getMap();
+
+        if (left < 0 || top < 0 || width < 0 || height < 0 || left > map.getWidth() - width || top > map.getHeight() - height) {
+            throw Exceptions.newIndexOutOfBoundsException("The {0}x{1} tiles at {2}, {3} leave the map.", width, height, left, top);
+        }
     }
 
     private int toTileIndex(int tileX, int tileY) {

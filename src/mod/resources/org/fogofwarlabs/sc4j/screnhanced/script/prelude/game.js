@@ -401,9 +401,13 @@
         setHp: function (hp) {
             core.unit.setHp(requireUnitId(this), round(hp * RAW_SCALE));
         },
-        // The hit points of the unit's type in units.dat.
+        // The unit's own maximum hit points, else those of its type in units.dat.
         getMaxHp: function () {
-            return core.dat.units.getHitPoints(core.unit.getType(requireUnitId(this))) / RAW_SCALE;
+            return core.unit.getMaxHp(requireUnitId(this)) / RAW_SCALE;
+        },
+        // Null gives the unit the maximum of its type again.
+        setMaxHp: function (hp) {
+            core.unit.setMaxHp(requireUnitId(this), hp === null ? NONE : max(round(hp * RAW_SCALE), 1));
         },
         getShields: function () {
             var id = requireUnitId(this);
@@ -592,6 +596,14 @@
         isDetectedBy: function (player) {
             return core.unit.isDetectedBy(requireUnitId(this), requireObject(player, playerPrototype, 'A player').id);
         },
+        // Whether the unit can reach the position: a unit that does not move on the ground always can, a ground unit within its connected ground.
+        canReach: function (position) {
+            var id = requireUnitId(this);
+
+            requireObject(position, positionPrototype, 'A position');
+
+            return core.unit.canReach(id, position.x, position.y);
+        },
         // The players whose sight covers the unit.
         getVisibleTo: function () {
             return toPlayers(core.unit.getVisibilityFlags(requireUnitId(this)));
@@ -722,6 +734,21 @@
     };
     unitPrototype.getTopSpeed = function () {
         return core.unit.getTopSpeed(requireUnitId(this));
+    };
+    unitPrototype.getSpeedPercent = function () {
+        return core.unit.getSpeedPercent(requireUnitId(this));
+    };
+    unitPrototype.setSpeedPercent = function (percent) {
+        core.unit.setSpeedPercent(requireUnitId(this), percent);
+    };
+    unitPrototype.getWeaponRange = function (weapon) {
+        return core.unit.getWeaponRange(requireUnitId(this), requireObject(weapon, weaponTypePrototype, 'A weapon type').id);
+    };
+    unitPrototype.getWeaponRangeBonus = function () {
+        return core.unit.getWeaponRangeBonus(requireUnitId(this));
+    };
+    unitPrototype.setWeaponRangeBonus = function (pixels) {
+        core.unit.setWeaponRangeBonus(requireUnitId(this), pixels);
     };
 
     // Returns the location id of the location option, NONE without one.
@@ -1504,6 +1531,18 @@
 
                                return core.creep.spread(requireObject(unitType, unitTypePrototype, 'A unit type').id, position.x, position.y) === 1;
                            },
+                           // Adds creep to every tile a location covers, clipped to the map, or every tile of a rectangle of tiles
+                           // (left, top, width, height), that can take it, as a finished building does under its footprint: the number of
+                           // tiles that took creep. Shared code only.
+                           fillTiles: function (locationOrLeft, top, width, height) {
+                               if (arguments.length < 4) {
+                                   var area = readLocationTiles(locationOrLeft);
+
+                                   return core.creep.fillTiles(area.left, area.top, area.right - area.left, area.bottom - area.top);
+                               }
+
+                               return core.creep.fillTiles(locationOrLeft, top, width, height);
+                           },
                            // Removes the creep of a tile at once. Shared code only.
                            remove: function (tileX, tileY) {
                                core.creep.removeTile(tileX, tileY);
@@ -1525,40 +1564,50 @@
                              setTile: function (tileX, tileY, tile) {
                                  core.terrain.setTile(tileX, tileY, requireObject(tile, tilePrototype, 'A tile').id);
                              },
-                             // Sets every tile a location covers.
-                             fillTiles: function (location, tile) {
-                                 var id = requireObject(tile, tilePrototype, 'A tile').id;
-                                 var area = readLocationTiles(location);
+                             // Sets every tile a location covers, clipped to the map, or every tile of a rectangle of tiles (left, top,
+                             // width, height).
+                             fillTiles: function (locationOrLeft, tileOrTop, width, height, tile) {
+                                 if (arguments.length < 5) {
+                                     var area = readLocationTiles(locationOrLeft);
 
-                                 for (var tileY = area.top; tileY < area.bottom; tileY++) {
-                                     for (var tileX = area.left; tileX < area.right; tileX++) {
-                                         core.terrain.setTile(tileX, tileY, id);
-                                     }
+                                     core.terrain.fillTiles(area.left, area.top, area.right - area.left, area.bottom - area.top,
+                                                            requireObject(tileOrTop, tilePrototype, 'A tile').id);
+                                 } else {
+                                     core.terrain.fillTiles(locationOrLeft, tileOrTop, width, height,
+                                                            requireObject(tile, tilePrototype, 'A tile').id);
                                  }
                              },
-                             // Copies the tiles one location covers onto the tiles another location of the same size in tiles covers.
-                             copyTiles: function (fromLocation, toLocation) {
-                                 var source = readLocationTiles(fromLocation);
-                                 var target = readLocationTiles(toLocation);
-                                 var width = source.right - source.left;
-                                 var height = source.bottom - source.top;
+                             // Copies the tiles one location covers onto the tiles another location of the same size in tiles covers, or the
+                             // tiles of a rectangle of tiles (left, top, width, height) onto the rectangle of the same size at (toLeft, toTop).
+                             copyTiles: function (fromLocationOrLeft, toLocationOrTop, width, height, toLeft, toTop) {
+                                 if (arguments.length >= 6) {
+                                     core.terrain.copyTiles(fromLocationOrLeft, toLocationOrTop, width, height, toLeft, toTop);
 
-                                 if (width !== target.right - target.left || height !== target.bottom - target.top) {
-                                     throw new RangeError('The locations cover ' + width + 'x' + height + ' and ' + (target.right - target.left) + 'x' +
-                                                          (target.bottom - target.top) + ' tiles, not the same size.');
+                                     return;
                                  }
 
-                                 var values = [];
+                                 var source = readLocationTiles(fromLocationOrLeft);
+                                 var target = readLocationTiles(toLocationOrTop);
+                                 var sourceWidth = source.right - source.left;
+                                 var sourceHeight = source.bottom - source.top;
 
-                                 for (var row = 0; row < height; row++) {
-                                     for (var column = 0; column < width; column++) {
-                                         values.push(core.terrain.getTile(source.left + column, source.top + row));
-                                     }
+                                 if (sourceWidth !== target.right - target.left || sourceHeight !== target.bottom - target.top) {
+                                     throw new RangeError('The locations cover ' + sourceWidth + 'x' + sourceHeight + ' and ' +
+                                                          (target.right - target.left) + 'x' + (target.bottom - target.top) +
+                                                          ' tiles, not the same size.');
                                  }
 
-                                 for (var index = 0; index < values.length; index++) {
-                                     core.terrain.setTile(target.left + index % width, target.top + floor(index / width), values[index]);
-                                 }
+                                 core.terrain.copyTiles(source.left, source.top, sourceWidth, sourceHeight, target.left, target.top);
+                             },
+                             // Sets every tile of a rectangle of tiles from an array of Tiles or tile ids, row by row from the top left tile.
+                             setTiles: function (left, top, width, height, tiles) {
+                                 core.terrain.setTiles(left, top, width, height, tiles);
+                             },
+                             // Replaces the picture of the tile's megatile with an Image, for every tile that shows the megatile, as
+                             // presentation. Shared code only, at the module top level or in onStart.
+                             replaceTileImage: function (tile, image) {
+                                 core.terrain.replaceTileImage(requireObject(tile, tilePrototype, 'A tile').id,
+                                                               requireObject(image, imagePrototype, 'An image').id);
                              }
                          });
 
@@ -1593,8 +1642,8 @@
         return resource === undefined || resource === null ? NONE : requireObject(resource, prototype, kind).id;
     }
 
-    // Returns the handle ids of the graphics {sd, hd, hd2}: a GRP, an HD anim and an HD2 anim, each optional; or {sheet} alone, whose handle
-    // takes the place of the GRP.
+    // Returns the handle ids of the graphics {sd, hd, hd2}: a GRP, an HD anim and an HD2 anim, each optional; or {sheet, frameSets} alone,
+    // whose handle takes the place of the GRP: the sheet's own frame order, or the sheet's frame set for each frame set the iscript plays.
     function readGraphicsIds(images) {
         if (images === null || typeof images !== 'object') {
             throw new TypeError('The graphics {sd, hd, hd2} or {sheet} are needed, not ' + images + '.');
@@ -1606,7 +1655,21 @@
                 throw new TypeError('A sheet is given without a GRP and anims.');
             }
 
-            return [requireObject(images.sheet, sheetPrototype, 'A sheet').id, NONE, NONE];
+            var sheetId = requireObject(images.sheet, sheetPrototype, 'A sheet').id;
+
+            if (images.frameSets === undefined || images.frameSets === null) {
+                return [sheetId, NONE, NONE];
+            }
+
+            if (!Array.isArray(images.frameSets)) {
+                throw new TypeError('The frame sets are an array, not ' + images.frameSets + '.');
+            }
+
+            return [core.resources.getSheetFrames(sheetId, images.frameSets), NONE, NONE];
+        }
+
+        if (images.frameSets !== undefined && images.frameSets !== null) {
+            throw new TypeError('Frame sets are given with a sheet only.');
         }
 
         return [readResourceId(images.sd, grpPrototype, 'A GRP'), readResourceId(images.hd, animPrototype, 'An anim'),
@@ -1704,6 +1767,39 @@
                              getTileHeight: function () {
                                  return core.game.getMapTileHeight();
                              },
+                             // The position a move command to the position gives one ground unit that comes from a unit or a position: the
+                             // position itself where the unit type stands, else walkable ground nearby on the side it comes from.
+                             findWalkablePosition: function (position, from, unitType) {
+                                 var fromX, fromY, typeId;
+
+                                 requireObject(position, positionPrototype, 'A position');
+
+                                 if (isObjectOf(from, unitPrototype)) {
+                                     var id = requireUnitId(from);
+
+                                     fromX = core.unit.getX(id);
+                                     fromY = core.unit.getY(id);
+                                     typeId = unitType === undefined ? core.unit.getType(id)
+                                                                     : requireObject(unitType, unitTypePrototype, 'A unit type').id;
+                                 } else {
+                                     requireObject(from, positionPrototype, 'A unit or a position');
+
+                                     fromX = from.x;
+                                     fromY = from.y;
+                                     typeId = requireObject(unitType, unitTypePrototype, 'A unit type').id;
+                                 }
+
+                                 var found = core.terrain.findWalkablePosition(position.x, position.y, fromX, fromY, typeId);
+
+                                 return createPosition(found[0], found[1]);
+                             },
+                             // Whether both positions lie in one connected area of the ground.
+                             isReachable: function (from, to) {
+                                 requireObject(from, positionPrototype, 'A position');
+                                 requireObject(to, positionPrototype, 'A position');
+
+                                 return core.terrain.isReachable(from.x, from.y, to.x, to.y);
+                             },
                              tileset: tileset,
                              terrain: terrain,
                              locations: locations,
@@ -1779,13 +1875,23 @@
                                    return dx * dx + dy * dy <= radius * radius && test(unit);
                                }, Infinity);
                            },
-                           // Creates a unit as Create Unit does; null when none was created. Shared code only.
+                           // Creates a unit as Create Unit does, without its failure messages; null when none was created. Shared code only.
                            create: function (type, player, position) {
                                requireObject(type, unitTypePrototype, 'A unit type');
                                requireObject(player, playerPrototype, 'A player');
                                requireObject(position, positionPrototype, 'A position');
 
                                return getUnit(core.unit.create(type.id, player.id, position.x, position.y));
+                           },
+                           // The position where create would place the unit; null when it would create none. Shared code only.
+                           findPlacement: function (type, player, position) {
+                               requireObject(type, unitTypePrototype, 'A unit type');
+                               requireObject(player, playerPrototype, 'A player');
+                               requireObject(position, positionPrototype, 'A position');
+
+                               var found = core.unit.findPlacement(type.id, player.id, position.x, position.y);
+
+                               return found === null ? null : createPosition(found[0], found[1]);
                            }
                        });
 

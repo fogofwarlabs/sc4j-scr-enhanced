@@ -11,9 +11,11 @@ import org.fogofwarlabs.sc4j.scr.game.extension.simulation.SimulationEvent;
 import org.fogofwarlabs.sc4j.scr.game.state.Game;
 import org.fogofwarlabs.sc4j.screnhanced.graphics.ConsoleSettings;
 import org.fogofwarlabs.sc4j.screnhanced.graphics.ImageReplacements;
+import org.fogofwarlabs.sc4j.screnhanced.graphics.TerrainReplacements;
 import org.fogofwarlabs.sc4j.screnhanced.script.ScriptPackage;
 import org.fogofwarlabs.sc4j.screnhanced.script.ScriptResources;
 import org.fogofwarlabs.sc4j.screnhanced.script.core.ScriptGame;
+import org.fogofwarlabs.sc4j.screnhanced.script.core.ScriptUnitStats;
 import org.fogofwarlabs.sc4j.screnhanced.script.input.ScriptLocalInput;
 import org.fogofwarlabs.sc4j.screnhanced.script.sync.ScriptCommandMessage;
 import org.jetbrains.annotations.NotNull;
@@ -283,10 +285,24 @@ public final class ScriptRuntime {
     }
 
     /**
+     * @return the terrain pictures the script replaces, the same instance for the whole game
+     */
+    public @NotNull TerrainReplacements getTerrainReplacements() {
+        return this.scriptGame.getTerrainReplacements();
+    }
+
+    /**
      * @return the console settings of the script, the same instance for the whole game
      */
     public @NotNull ConsoleSettings getConsoleSettings() {
         return this.scriptGame.getConsoleSettings();
+    }
+
+    /**
+     * @return the stats the script gives single units, the same instance for the whole game
+     */
+    public @NotNull ScriptUnitStats getUnitStats() {
+        return this.scriptGame.getUnitStats();
     }
 
     /**

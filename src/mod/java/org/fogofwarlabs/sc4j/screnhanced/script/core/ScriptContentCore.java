@@ -37,8 +37,10 @@ import java.util.function.Function;
  * <p>
  * {@code core.imageType.create(sheet, name, script, scriptImageType, frameSets, drawFunction, animationFrameSets, animationFrameTime)} registers an
  * image type that draws a sheet ({@code core.resources.getSheet}). Its iscript is a generic script ({@code script} {@value #STILL_SCRIPT} for
- * {@code Still}, {@value #PROJECTILE_SCRIPT} for {@code Projectile}) or that of an image type ({@code scriptImageType}, {@code script}
- * {@code -1}), whose iscript, draw function, color shift, Clickable, Use Full Iscript, Draw If Cloaked and overlay files it copies.
+ * {@code Still}, {@value #PROJECTILE_SCRIPT} for {@code Projectile}, {@value #UNIT_SCRIPT} for {@code Unit}, which needs
+ * {@link ScriptContentExtension#UNIT_FRAME_SETS} frame sets of {@value SheetLayout#TURNING_DIRECTIONS} directions and makes the image clickable)
+ * or that of an image type ({@code scriptImageType}, {@code script} {@code -1}), whose iscript, draw function, color shift, Clickable, Use Full
+ * Iscript, Draw If Cloaked and overlay files it copies.
  * {@code frameSets} ({@code null} for the sheet's own order) names for each frame set the script plays the frame set of the sheet that draws it;
  * the game's frames of the type, which the simulation reads, are the sheet's frames in that order, quantized in shared code from the map's
  * resource bytes and the layout ({@link org.fogofwarlabs.sc4j.screnhanced.graphics.PictureSheetConverter}). {@code drawFunction} is {@code -1}
@@ -60,6 +62,10 @@ final class ScriptContentCore {
      * The generic script of a bullet's image type.
      */
     static final int PROJECTILE_SCRIPT = 1;
+    /**
+     * The generic script of a unit that turns, walks, attacks and dies, without sounds.
+     */
+    static final int UNIT_SCRIPT = 2;
 
     private static final @NotNull String IMAGE_NAME_PREFIX = "Image";
     private static final @NotNull String SPRITE_NAME_PREFIX = "Sprite";
@@ -102,42 +108,6 @@ final class ScriptContentCore {
         while (names.size() < firstReserved) {
             names.add(prefix + names.size());
         }
-    }
-
-    /**
-     * Expands the frame sets a script plays into the sheet frame of each frame of the image type.
-     *
-     * @param frameSets the sheet's frame set for each script frame set, or {@code null} for the sheet's own order
-     * @throws EcmaError if a frame set is outside the sheet
-     */
-    private static int @NotNull [] expandFrameSets(@NotNull SheetLayout layout, int @Nullable [] frameSets) {
-        int directions = layout.getDirections();
-        int setCount = layout.getFrameCount() / directions;
-        int[] sets = frameSets;
-
-        if (sets == null) {
-            sets = new int[setCount];
-
-            for (int set = 0; set < setCount; set++) {
-                sets[set] = set;
-            }
-        }
-
-        if (sets.length == 0) {
-            throw ScriptRuntime.rangeError("The frame sets are empty.");
-        }
-
-        int[] frames = new int[sets.length * directions];
-
-        for (int index = 0; index < sets.length; index++) {
-            ScriptCoreUtils.requireId("frame set", sets[index], setCount);
-
-            for (int direction = 0; direction < directions; direction++) {
-                frames[index * directions + direction] = sets[index] * directions + direction;
-            }
-        }
-
-        return frames;
     }
 
     private static @Nullable String readName(@NotNull Object @NotNull [] arguments, int index) {
@@ -281,7 +251,7 @@ final class ScriptContentCore {
         int animationFrameTime = ScriptCoreUtils.readInteger(arguments, 7);
 
         if (scriptImageType == ScriptCoreUtils.NO_ID) {
-            ScriptCoreUtils.requireId("generic script", script, PROJECTILE_SCRIPT + 1);
+            ScriptCoreUtils.requireId("generic script", script, UNIT_SCRIPT + 1);
         } else if (script != ScriptCoreUtils.NO_ID) {
             throw ScriptRuntime.rangeError("An image type takes a generic script or the script of an image type, not both.");
         } else {
@@ -293,7 +263,13 @@ final class ScriptContentCore {
         }
 
         SheetLayout layout = sheet.getLayout();
-        int[] frames = expandFrameSets(layout, frameSets);
+        int[] frames = ScriptGraphicsCore.expandFrameSets(layout, frameSets);
+
+        if (script == UNIT_SCRIPT && (layout.getDirections() != SheetLayout.TURNING_DIRECTIONS ||
+                                      frames.length < ScriptContentExtension.UNIT_FRAME_SETS * SheetLayout.TURNING_DIRECTIONS)) {
+            throw ScriptRuntime.rangeError(Exceptions.format("The Unit script plays {0} frame sets of {1} directions.",
+                                                             ScriptContentExtension.UNIT_FRAME_SETS, SheetLayout.TURNING_DIRECTIONS));
+        }
         int id = reserved.getFirstImage() + this.imageCount;
         GameData gameData = this.scriptGame.getGame().requireGameData();
         byte[] grp = this.graphicsCore.createGrp(sheet, frames);
@@ -315,14 +291,19 @@ final class ScriptContentCore {
                 this.writeValue(ScrDatKind.IMAGES, field, id, this.readImageValue(gameData, field, scriptImageType));
             }
         } else {
-            boolean projectile = script == PROJECTILE_SCRIPT;
-            int iscript = projectile ? reserved.getProjectileScript() : sheet.hasShadow() ? reserved.getStillShadowScript() : reserved.getStillScript();
+            boolean still = script == STILL_SCRIPT;
+            boolean unit = script == UNIT_SCRIPT;
+            int iscript = switch (script) {
+                case PROJECTILE_SCRIPT -> reserved.getProjectileScript();
+                case UNIT_SCRIPT -> sheet.hasShadow() ? reserved.getUnitShadowScript() : reserved.getUnitScript();
+                default -> sheet.hasShadow() ? reserved.getStillShadowScript() : reserved.getStillScript();
+            };
 
             this.writeValue(ScrDatKind.IMAGES, ImagesDat.ISCRIPT, id, iscript);
             this.writeValue(ScrDatKind.IMAGES, ImagesDat.DRAW_FUNCTION, id, SpriteImage.MODIFIER_NORMAL);
             this.writeValue(ScrDatKind.IMAGES, ImagesDat.COLOR_SHIFT, id, 0);
-            this.writeValue(ScrDatKind.IMAGES, ImagesDat.CLICKABLE, id, 0);
-            this.writeValue(ScrDatKind.IMAGES, ImagesDat.FULL_ISCRIPT, id, projectile ? 1 : 0);
+            this.writeValue(ScrDatKind.IMAGES, ImagesDat.CLICKABLE, id, unit ? 1 : 0);
+            this.writeValue(ScrDatKind.IMAGES, ImagesDat.FULL_ISCRIPT, id, still ? 0 : 1);
             this.writeValue(ScrDatKind.IMAGES, ImagesDat.DRAW_IF_CLOAKED, id, 0);
         }
 

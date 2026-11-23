@@ -1,6 +1,8 @@
 package org.fogofwarlabs.sc4j.screnhanced.graphics;
 
 import org.fogofwarlabs.sc4j.base.binary.LittleEndianUtils;
+import org.fogofwarlabs.sc4j.base.exception.Exceptions;
+import org.fogofwarlabs.sc4j.engine.resource.graphics.SpriteSheet;
 import org.fogofwarlabs.sc4j.scr.data.resource.ScrImageAnimation;
 import org.fogofwarlabs.sc4j.scr.data.resource.ScrImageSheet;
 import org.fogofwarlabs.sc4j.scr.game.extension.ScrGamePlugin;
@@ -10,6 +12,7 @@ import org.fogofwarlabs.sc4j.scr.game.trigger.eud.ClassicMemoryView;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
@@ -107,6 +110,37 @@ public final class ClassicImageGraphics implements ScrGamePlugin {
      * The factor the table write history of an image type grows by.
      */
     private static final int HISTORY_GROWTH = 2;
+
+    /**
+     * The frames of a replacement that draws nothing: none, so no frame of the image is drawn.
+     */
+    private static final @NotNull ScrImageSheet NO_FRAMES = new NoFrames();
+
+    /**
+     * A sheet without frames.
+     */
+    private static final class NoFrames implements ScrImageSheet {
+        /**
+         * @return the number of frames
+         */
+        @Override
+        public int getFrameCount() {
+            return 0;
+        }
+
+        /**
+         * Returns one frame as a one-frame indexed sheet. The same instance is returned while the frame's pixels are unchanged, so what a renderer
+         * makes of a frame can be kept under that instance.
+         *
+         * @param frameIndex the frame index, {@code 0} up to {@link #getFrameCount()} minus one
+         * @return the one-frame sheet
+         * @throws IOException if the index names no frame or the frame cannot be decoded
+         */
+        @Override
+        public @NotNull SpriteSheet getFrame(int frameIndex) throws IOException {
+            throw Exceptions.newIOException("The sheet has no frame {0}.", frameIndex);
+        }
+    }
 
     private final @NotNull Supplier<@Nullable SpriteImagePool> images;
     private final @NotNull Supplier<@Nullable ImageReplacements> replacements;
@@ -235,8 +269,8 @@ public final class ClassicImageGraphics implements ScrGamePlugin {
     }
 
     /**
-     * Finds the graphics a sprite image draws instead of its installed GRP: the GRP of its script replacement, else the sheet of the GRP its
-     * pointer names.
+     * Finds the graphics a sprite image draws instead of its installed GRP: the GRP of its script replacement, no frame for a replacement that
+     * draws nothing ({@link ImageGraphics#HIDDEN}), else the sheet of the GRP its pointer names.
      *
      * @param image an image of a drawn sprite
      * @return the frames of the GRP the image draws, or {@code null} for its installed graphics
@@ -246,7 +280,7 @@ public final class ClassicImageGraphics implements ScrGamePlugin {
         ImageGraphics replaced = this.findReplacement(image);
 
         if (replaced != null) {
-            return replaced.getGrp();
+            return replaced.isHidden() ? NO_FRAMES : replaced.getGrp();
         }
 
         EmbeddedGraphics found = this.findGraphics(this.findPointer(image));

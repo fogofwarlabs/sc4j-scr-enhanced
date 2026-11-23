@@ -1,6 +1,8 @@
 package org.fogofwarlabs.sc4j.screnhanced.graphics;
 
 import org.fogofwarlabs.sc4j.base.exception.Exceptions;
+import org.fogofwarlabs.sc4j.engine.resource.graphics.Picture;
+import org.fogofwarlabs.sc4j.engine.resource.graphics.PixelLayer;
 import org.fogofwarlabs.sc4j.scr.data.format.terrain.TerrainTileset;
 import org.fogofwarlabs.sc4j.scr.game.trigger.eud.ClassicAddressSpace;
 import org.fogofwarlabs.sc4j.scr.game.trigger.eud.ClassicMemoryView;
@@ -16,8 +18,8 @@ import java.util.Arrays;
 
 /**
  * Checks the classic terrain pictures: a write to minitile pixels changes every megatile that shows the minitile, mirrored where its reference says
- * so, a write to a megatile's WORD references changes that megatile, other megatiles keep the installed picture, and an unchanged picture keeps its
- * array.
+ * so, a write to a megatile's WORD references changes that megatile, other megatiles keep the installed picture, an unchanged picture keeps its
+ * array, and a replaced megatile draws its covered pixels over the written or installed picture.
  */
 final class ClassicTerrainGraphicsTest {
     /**
@@ -36,6 +38,10 @@ final class ClassicTerrainGraphicsTest {
      */
     private static final int MIRRORED_MINITILE_1 = 3;
     private static final int MINITILE_1 = 2;
+    /**
+     * The palette index a replacement covers the first pixel of megatile {@code 0} with.
+     */
+    private static final byte REPLACED_PIXEL = 9;
 
     /**
      * Creates the installed files: megatile {@code 0} shows minitile {@code 0} everywhere, megatile {@code 1} shows minitile {@code 1} mirrored in
@@ -93,7 +99,7 @@ final class ClassicTerrainGraphicsTest {
     @Test
     void a_minitile_write_changes_the_megatiles_that_show_it() {
         ClassicAddressSpace space = createSpace();
-        ClassicTerrainGraphics graphics = new ClassicTerrainGraphics(ClassicTerrainGraphicsTest::readInstalled);
+        ClassicTerrainGraphics graphics = new ClassicTerrainGraphics(ClassicTerrainGraphicsTest::readInstalled, () -> null);
 
         graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
 
@@ -119,7 +125,7 @@ final class ClassicTerrainGraphicsTest {
     @Test
     void a_reference_write_changes_its_megatile() {
         ClassicAddressSpace space = createSpace();
-        ClassicTerrainGraphics graphics = new ClassicTerrainGraphics(ClassicTerrainGraphicsTest::readInstalled);
+        ClassicTerrainGraphics graphics = new ClassicTerrainGraphics(ClassicTerrainGraphicsTest::readInstalled, () -> null);
 
         graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
         space.writeDword(MEGATILES + 2 * ClassicTerrainGraphics.MEGATILE_ENTRY_SIZE, MINITILE_1);
@@ -134,11 +140,44 @@ final class ClassicTerrainGraphicsTest {
     }
 
     @Test
+    void a_replaced_megatile_draws_its_covered_pixels_over_the_written_or_installed_picture() {
+        ClassicAddressSpace space = createSpace();
+        TerrainReplacements replacements = new TerrainReplacements();
+        ClassicTerrainGraphics graphics = new ClassicTerrainGraphics(ClassicTerrainGraphicsTest::readInstalled, () -> replacements);
+        Picture picture = new Picture(TerrainTileset.TILE_SIZE, TerrainTileset.TILE_SIZE,
+                                      PixelLayer.ofRgba(new int[TerrainTileset.TILE_SIZE * TerrainTileset.TILE_SIZE]));
+        byte[] pixels = new byte[TerrainTileset.TILE_SIZE * TerrainTileset.TILE_SIZE];
+        byte[] coverage = new byte[pixels.length];
+
+        pixels[0]   = REPLACED_PIXEL;
+        coverage[0] = 1;
+
+        graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
+        replacements.replaceTile(0, picture, pixels, coverage);
+
+        byte[] installed = graphics.findTerrainTile(0);
+
+        Assertions.assertNotNull(installed);
+        Assertions.assertArrayEquals(new int[]{REPLACED_PIXEL, FILL, FILL, FILL, FILL, FILL, FILL, FILL}, readTopRow(installed, 0));
+        Assertions.assertSame(installed, graphics.findTerrainTile(0));
+        Assertions.assertSame(picture, graphics.findTerrainTilePicture(0));
+        Assertions.assertNull(graphics.findTerrainTile(2));
+        Assertions.assertNull(graphics.findTerrainTilePicture(2));
+
+        space.writeDword(MINITILES, WRITTEN_PIXELS);
+
+        byte[] written = graphics.findTerrainTile(0);
+
+        Assertions.assertNotNull(written);
+        Assertions.assertArrayEquals(new int[]{REPLACED_PIXEL, 2, 3, 4, FILL, FILL, FILL, FILL}, readTopRow(written, 0));
+    }
+
+    @Test
     void unreadable_installed_files_keep_the_installed_pictures() {
         ClassicAddressSpace space = createSpace();
         ClassicTerrainGraphics graphics = new ClassicTerrainGraphics(extension -> {
             throw Exceptions.newIOException("No installed file {0}.", extension);
-        });
+        }, () -> null);
 
         graphics.onAddressSpaceCreated(new ClassicMemoryView(space));
         space.writeDword(MEGATILES, MINITILE_1);

@@ -17,6 +17,7 @@ import org.fogofwarlabs.sc4j.scr.game.unit.Unit;
 import org.fogofwarlabs.sc4j.scr.game.unit.UnitPool;
 import org.fogofwarlabs.sc4j.screnhanced.graphics.ConsoleSettings;
 import org.fogofwarlabs.sc4j.screnhanced.graphics.ImageReplacements;
+import org.fogofwarlabs.sc4j.screnhanced.graphics.TerrainReplacements;
 import org.fogofwarlabs.sc4j.screnhanced.script.ScriptContentExtension;
 import org.fogofwarlabs.sc4j.screnhanced.script.ScriptResources;
 import org.fogofwarlabs.sc4j.screnhanced.script.input.ScriptButtonPress;
@@ -95,7 +96,7 @@ public final class ScriptGame {
         new ScriptPlayerCore(scriptGame).define(ScriptCoreUtils.createNamespace(context, global, core, "player"), global);
         unitCore.define(ScriptCoreUtils.createNamespace(context, global, core, "unit"), global);
         new ScriptLocationCore(scriptGame).define(ScriptCoreUtils.createNamespace(context, global, core, "location"), global);
-        new ScriptTerrainCore(scriptGame).define(ScriptCoreUtils.createNamespace(context, global, core, "terrain"), global);
+        new ScriptTerrainCore(scriptGame, graphicsCore).define(ScriptCoreUtils.createNamespace(context, global, core, "terrain"), global);
         new ScriptCreepCore(scriptGame).define(ScriptCoreUtils.createNamespace(context, global, core, "creep"), global);
         spriteCore.defineSprites(ScriptCoreUtils.createNamespace(context, global, core, "sprite"), global);
         spriteCore.defineImages(ScriptCoreUtils.createNamespace(context, global, core, "image"), global);
@@ -118,6 +119,7 @@ public final class ScriptGame {
         screenCore.defineDrawing(screen, global, ScrDrawList.Space.SCREEN);
         screenCore.defineScreen(screen, global);
         screenCore.defineDrawing(ScriptCoreUtils.createNamespace(context, global, core, "world"), global, ScrDrawList.Space.WORLD);
+        screenCore.defineDrawing(ScriptCoreUtils.createNamespace(context, global, core, "ground"), global, ScrDrawList.Space.GROUND);
         screenCore.defineDrawing(ScriptCoreUtils.createNamespace(context, global, core, "minimap"), global, ScrDrawList.Space.MINIMAP);
         new ScriptConsoleCore(scriptGame, scriptGame.consoleSettings, graphicsCore)
                 .define(ScriptCoreUtils.createNamespace(context, global, core, "console"), global);
@@ -143,7 +145,9 @@ public final class ScriptGame {
     private final @NotNull Scriptable core;
 
     private final @NotNull ImageReplacements imageReplacements;
+    private final @NotNull TerrainReplacements terrainReplacements;
     private final @NotNull ConsoleSettings consoleSettings;
+    private final @NotNull ScriptUnitStats unitStats;
     private final @NotNull ScriptEventCore eventCore;
     private final @NotNull ScriptCommandCore commandCore;
     private final @NotNull ScriptLocalCore localCore;
@@ -159,7 +163,8 @@ public final class ScriptGame {
     private boolean typeRegistration;
 
     /**
-     * Creates a {@link ScriptGame} instance without image replacements, events, commands and registered texts, neither read-only nor local.
+     * Creates a {@link ScriptGame} instance without image replacements, unit stats, events, commands and registered texts, neither read-only nor
+     * local.
      *
      * @param game   the game
      * @param global the global scope
@@ -170,20 +175,22 @@ public final class ScriptGame {
         this.global = global;
         this.core   = core;
 
-        this.imageReplacements = new ImageReplacements(() -> game.getUnitSystem().getUnitPool(), game::getCurrentFrame, countImageTypes(game),
-                                                       imageTypeId -> {
-                                                           GameData gameData = game.getGameData();
+        this.imageReplacements   = new ImageReplacements(() -> game.getUnitSystem().getUnitPool(), () -> game.getSpriteSystem().getSpritePool(),
+                                                         game::getCurrentFrame, countImageTypes(game), imageTypeId -> {
+            GameData gameData = game.getGameData();
 
-                                                           return gameData != null && gameData.getImageTypes().getGraphicTurns(imageTypeId) != 0;
-                                                       });
-        this.consoleSettings   = new ConsoleSettings();
-        this.eventCore         = new ScriptEventCore(this);
-        this.commandCore       = new ScriptCommandCore(this);
-        this.localCore         = new ScriptLocalCore(this);
-        this.soundCore         = new ScriptSoundCore(this);
-        this.terrainChanges    = new ScriptTerrainChanges(game);
-        this.screenCore        = null;
-        this.contentCore       = null;
+            return gameData != null && gameData.getImageTypes().getGraphicTurns(imageTypeId) != 0;
+        });
+        this.terrainReplacements = new TerrainReplacements();
+        this.consoleSettings     = new ConsoleSettings();
+        this.unitStats           = new ScriptUnitStats(() -> game.getUnitSystem().getUnitPool());
+        this.eventCore           = new ScriptEventCore(this);
+        this.commandCore         = new ScriptCommandCore(this);
+        this.localCore           = new ScriptLocalCore(this);
+        this.soundCore           = new ScriptSoundCore(this);
+        this.terrainChanges      = new ScriptTerrainChanges(game);
+        this.screenCore          = null;
+        this.contentCore         = null;
 
         this.registeredTexts = new HashMap<>();
 
@@ -231,10 +238,24 @@ public final class ScriptGame {
     }
 
     /**
+     * @return the terrain pictures the script replaces ({@code core.terrain}), the same instance for the whole game
+     */
+    public @NotNull TerrainReplacements getTerrainReplacements() {
+        return this.terrainReplacements;
+    }
+
+    /**
      * @return the console settings of the script ({@code core.console}), the same instance for the whole game
      */
     public @NotNull ConsoleSettings getConsoleSettings() {
         return this.consoleSettings;
+    }
+
+    /**
+     * @return the stats the script gives single units ({@code core.unit}), the same instance for the whole game
+     */
+    public @NotNull ScriptUnitStats getUnitStats() {
+        return this.unitStats;
     }
 
     /**
@@ -245,7 +266,7 @@ public final class ScriptGame {
     }
 
     /**
-     * Finds what the last completed render call drew ({@code core.screen}, {@code core.world} and {@code core.minimap}).
+     * Finds what the last completed render call drew ({@code core.screen}, {@code core.world}, {@code core.ground} and {@code core.minimap}).
      *
      * @return the draw list, or {@code null} if the last call drew nothing or no call completed
      */
@@ -499,7 +520,7 @@ public final class ScriptGame {
      * @throws UnsupportedOperationException if the contours of the changed map cannot be built
      */
     public void applyTerrainChanges() {
-        this.terrainChanges.applyChanges(this.getInstructionLimit());
+        this.terrainChanges.applyChanges();
     }
 
     /**

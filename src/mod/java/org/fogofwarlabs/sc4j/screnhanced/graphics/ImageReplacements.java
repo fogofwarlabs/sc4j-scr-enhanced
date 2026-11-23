@@ -5,6 +5,7 @@ import org.fogofwarlabs.sc4j.scr.content.ScrImages;
 import org.fogofwarlabs.sc4j.scr.game.sprite.Sprite;
 import org.fogofwarlabs.sc4j.scr.game.sprite.SpriteImage;
 import org.fogofwarlabs.sc4j.scr.game.sprite.SpriteImagePool;
+import org.fogofwarlabs.sc4j.scr.game.sprite.SpritePool;
 import org.fogofwarlabs.sc4j.scr.game.unit.Unit;
 import org.fogofwarlabs.sc4j.scr.game.unit.UnitPool;
 import org.jetbrains.annotations.NotNull;
@@ -40,6 +41,13 @@ import java.util.function.Supplier;
  * may loop frame sets the same way for every image of the type that draws its own frame ({@link #setTypeAnimation}). A shadow image of a sprite
  * whose main image draws graphics made from a sheet ({@link ImageGraphics#isSheet()}) draws the sheet's shadow graphics, else the main image's
  * graphics, at the frame the main image draws.
+ * <p>
+ * A unit, and an image type, may also give graphics to its shadow and its remains, {@link ImageGraphics#HIDDEN} to draw nothing. The shadow is
+ * every image of a sprite that draws with the shadow draw function while the sprite's main image is another one: a unit's shadow graphics apply
+ * in the sprites of the unit, an image type's in the sprites whose main image is of the type, the unit's winning. The remains are what a unit
+ * shows after it died ({@link #onUnitDied}): the images its sprite gets from then on, as the images of its death animation, and the sprites those
+ * images create with their iscript ({@link #onSpriteCreated}), and the sprites these create in turn; the unit's remains graphics apply, else
+ * those of the image type of its sprite's main image when it died. A sprite of remains keeps its graphics while its sprite pool slot holds it.
  */
 public final class ImageReplacements {
     /**
@@ -50,6 +58,10 @@ public final class ImageReplacements {
      * The frames of a frame set of an image that turns.
      */
     private static final int TURNING_DIRECTIONS = SheetLayout.TURNING_DIRECTIONS;
+    /**
+     * The image generation of a sprite of remains whose every image draws the remains graphics.
+     */
+    private static final long EVERY_IMAGE = -1;
 
     /**
      * Frame sets drawn one after another, each for a number of game frames from a start frame.
@@ -106,6 +118,50 @@ public final class ImageReplacements {
             this.imageTypeId = imageTypeId;
 
             this.graphics = graphics;
+        }
+    }
+
+    /**
+     * The graphics of one unit's shadow and remains.
+     */
+    private static final class UnitParts {
+        private final @NotNull Unit unit;
+        private final int generation;
+
+        /**
+         * The shadow graphics, {@code null} for the installed ones.
+         */
+        private @Nullable ImageGraphics shadow;
+        /**
+         * The remains graphics, {@code null} for the installed ones.
+         */
+        private @Nullable ImageGraphics remains;
+
+        private UnitParts(@NotNull Unit unit, int generation) {
+            this.unit       = unit;
+            this.generation = generation;
+
+            this.shadow  = null;
+            this.remains = null;
+        }
+    }
+
+    /**
+     * A sprite whose images draw the remains graphics of a unit.
+     */
+    private static final class RemainsSprite {
+        private final long generation;
+        /**
+         * The image pool generation when the unit died: the images of a later generation draw the remains graphics; {@link #EVERY_IMAGE} for a
+         * sprite an image of the remains created, whose every image does.
+         */
+        private final long imageGeneration;
+        private final @NotNull ImageGraphics graphics;
+
+        private RemainsSprite(long generation, long imageGeneration, @NotNull ImageGraphics graphics) {
+            this.generation      = generation;
+            this.imageGeneration = imageGeneration;
+            this.graphics        = graphics;
         }
     }
 
@@ -178,8 +234,30 @@ public final class ImageReplacements {
     }
 
     /**
-     * Checks whether a sprite is the sprite of a unit or of its subunit.
+     * Checks whether the shadow and remains graphics of a unit belong to the unit still in its slot.
+     *
+     * @param pool  the game's unit pool
+     * @param parts the graphics
+     * @return {@code true} if the slot is allocated and keeps the generation of the unit, {@code false} otherwise
      */
+    private static boolean isHeld(@NotNull UnitPool pool, @NotNull UnitParts parts) {
+        int index = parts.unit.getIndex();
+
+        return pool.isAllocated(index) && pool.getGeneration(index) == parts.generation;
+    }
+
+    /**
+     * Checks whether a sprite of remains is still in its slot.
+     *
+     * @param pool    the game's sprite pool
+     * @param slot    the sprite pool slot
+     * @param remains the sprite of remains
+     * @return {@code true} if the slot is allocated and keeps the generation of the sprite, {@code false} otherwise
+     */
+    private static boolean isHeld(@NotNull SpritePool pool, int slot, @NotNull RemainsSprite remains) {
+        return slot < pool.getCapacity() && pool.isAllocated(slot) && pool.getGeneration(slot) == remains.generation;
+    }
+
     private static @NotNull Playback createPlayback(int @NotNull [] frameSets, int frameTime, int startFrame, boolean loop,
                                                     @Nullable ImageGraphics graphics) {
         if (frameSets.length == 0) {
@@ -199,6 +277,9 @@ public final class ImageReplacements {
         return new Playback(frameSets.clone(), frameTime, startFrame, loop, graphics);
     }
 
+    /**
+     * Checks whether a sprite is the sprite of a unit or of its subunit.
+     */
     private static boolean isUnitSprite(@NotNull Unit unit, @NotNull Sprite sprite) {
         if (unit.getSpriteOrNull() == sprite) {
             return true;
@@ -211,6 +292,7 @@ public final class ImageReplacements {
 
 
     private final @NotNull Supplier<@Nullable UnitPool> units;
+    private final @NotNull Supplier<@Nullable SpritePool> sprites;
     private final @NotNull IntSupplier frames;
     private final @NotNull IntPredicate turning;
     private final EmbeddedAnim.@NotNull Cache animations;
@@ -223,7 +305,21 @@ public final class ImageReplacements {
      * The frame sets every image of an image type loops, by image type; {@code null} for none.
      */
     private final @Nullable Playback @NotNull [] typeAnimations;
+    /**
+     * The shadow graphics per image type of the main image, {@code null} for the installed ones.
+     */
+    private final @Nullable ImageGraphics @NotNull [] typeShadows;
+    /**
+     * The remains graphics per image type of the main image, {@code null} for the installed ones.
+     */
+    private final @Nullable ImageGraphics @NotNull [] typeRemains;
+    private int typeRemainsCount;
     private final @NotNull List<UnitReplacement> unitReplacements;
+    private final @NotNull List<UnitParts> unitParts;
+    /**
+     * The sprites of remains by sprite pool slot.
+     */
+    private final @NotNull Map<Integer, RemainsSprite> remainsSprites;
     /**
      * The overrides of single images by image pool slot.
      */
@@ -235,27 +331,34 @@ public final class ImageReplacements {
      * @param units the game's unit pool, {@code null} before the game has one
      */
     public ImageReplacements(@NotNull Supplier<@Nullable UnitPool> units) {
-        this(units, () -> 0, ScrImages.COUNT, imageTypeId -> false);
+        this(units, () -> null, () -> 0, ScrImages.COUNT, imageTypeId -> false);
     }
 
     /**
      * Creates an {@link ImageReplacements} instance without replacements.
      *
      * @param units          the game's unit pool, {@code null} before the game has one
+     * @param sprites        the game's sprite pool, which holds the sprites of remains; {@code null} before the game has one
      * @param frames         the game's current frame, which times the plays
      * @param imageTypeCount the number of image types that take graphics, the native ones first
      * @param turning        tells whether an image type has Graphic Turns, which makes graphics of unknown frame sets turn
      */
-    public ImageReplacements(@NotNull Supplier<@Nullable UnitPool> units, @NotNull IntSupplier frames, int imageTypeCount,
-                             @NotNull IntPredicate turning) {
+    public ImageReplacements(@NotNull Supplier<@Nullable UnitPool> units, @NotNull Supplier<@Nullable SpritePool> sprites,
+                             @NotNull IntSupplier frames, int imageTypeCount, @NotNull IntPredicate turning) {
         this.units      = units;
+        this.sprites    = sprites;
         this.frames     = frames;
         this.turning    = turning;
         this.animations = new EmbeddedAnim.Cache(ClassicImageGraphics.ANIMATION_BUDGET);
 
         this.typeGraphics     = new ImageGraphics[imageTypeCount];
         this.typeAnimations   = new Playback[imageTypeCount];
+        this.typeShadows      = new ImageGraphics[imageTypeCount];
+        this.typeRemains      = new ImageGraphics[imageTypeCount];
+        this.typeRemainsCount = 0;
         this.unitReplacements = new ArrayList<>();
+        this.unitParts        = new ArrayList<>();
+        this.remainsSprites   = new HashMap<>();
         this.imageOverrides   = new HashMap<>();
     }
 
@@ -575,6 +678,142 @@ public final class ImageReplacements {
     }
 
     /**
+     * Sets the graphics of the shadow of the sprites whose main image is of an image type.
+     *
+     * @param imageTypeId the image type of the main image, an {@code images.dat} entry
+     * @param graphics    the graphics, {@link ImageGraphics#HIDDEN} for none, or {@code null} for the installed ones
+     * @throws IllegalArgumentException if the image type is outside {@code images.dat}
+     */
+    public void setTypeShadow(int imageTypeId, @Nullable ImageGraphics graphics) {
+        this.typeShadows[this.requireImageTypeId(imageTypeId)] = graphics;
+    }
+
+    /**
+     * Sets the graphics of the remains of the units whose sprite's main image is of an image type when they die.
+     *
+     * @param imageTypeId the image type of the main image, an {@code images.dat} entry
+     * @param graphics    the graphics, {@link ImageGraphics#HIDDEN} for none, or {@code null} for the installed ones
+     * @throws IllegalArgumentException if the image type is outside {@code images.dat}
+     */
+    public void setTypeRemains(int imageTypeId, @Nullable ImageGraphics graphics) {
+        int index = this.requireImageTypeId(imageTypeId);
+
+        if (this.typeRemains[index] == null && graphics != null) {
+            this.typeRemainsCount++;
+        } else if (this.typeRemains[index] != null && graphics == null) {
+            this.typeRemainsCount--;
+        }
+
+        this.typeRemains[index] = graphics;
+    }
+
+    /**
+     * Sets the graphics of a unit's shadow, for as long as the unit's slot holds the unit.
+     *
+     * @param unit     the unit, in an allocated slot of the game's unit pool
+     * @param graphics the graphics, {@link ImageGraphics#HIDDEN} for none, or {@code null} for those of the image type
+     * @throws IllegalArgumentException if the unit's slot is not allocated
+     * @throws IllegalStateException    if the game has no unit pool
+     */
+    public void setUnitShadow(@NotNull Unit unit, @Nullable ImageGraphics graphics) {
+        this.placeUnitParts(unit).shadow = graphics;
+    }
+
+    /**
+     * Sets the graphics of a unit's remains, which the unit leaves when it dies while its slot holds it.
+     *
+     * @param unit     the unit, in an allocated slot of the game's unit pool
+     * @param graphics the graphics, {@link ImageGraphics#HIDDEN} for none, or {@code null} for those of the image type
+     * @throws IllegalArgumentException if the unit's slot is not allocated
+     * @throws IllegalStateException    if the game has no unit pool
+     */
+    public void setUnitRemains(@NotNull Unit unit, @Nullable ImageGraphics graphics) {
+        this.placeUnitParts(unit).remains = graphics;
+    }
+
+    private @NotNull UnitParts placeUnitParts(@NotNull Unit unit) {
+        UnitPool pool = this.requireUnitPool();
+
+        if (!pool.isAllocated(unit.getIndex())) {
+            throw Exceptions.newIllegalArgumentException("The unit slot {0} is not allocated.", unit.getIndex());
+        }
+
+        UnitParts parts = this.findUnitParts(pool, unit);
+
+        if (parts == null) {
+            parts = new UnitParts(unit, pool.getGeneration(unit.getIndex()));
+            this.unitParts.add(parts);
+        }
+
+        return parts;
+    }
+
+    private @Nullable UnitParts findUnitParts(@NotNull UnitPool pool, @NotNull Unit unit) {
+        for (UnitParts parts : this.unitParts) {
+            if (parts.unit == unit && isHeld(pool, parts)) {
+                return parts;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Hears that a unit died: when the unit, or the image type of its sprite's main image, has remains graphics, the images its sprite gets from
+     * now on draw them.
+     *
+     * @param unit the dying unit, which still holds its sprite
+     */
+    public void onUnitDied(@NotNull Unit unit) {
+        if (this.unitParts.isEmpty() && this.typeRemainsCount == 0) {
+            return;
+        }
+
+        Sprite sprite = unit.getSpriteOrNull();
+        SpriteImage main = sprite == null ? null : sprite.getMainImage();
+        SpritePool spritePool = this.sprites.get();
+        UnitPool unitPool = this.units.get();
+
+        if (main == null || spritePool == null || unitPool == null) {
+            return;
+        }
+
+        UnitParts parts = this.findUnitParts(unitPool, unit);
+        ImageGraphics remains = parts == null ? null : parts.remains;
+        int imageTypeId = main.getImageTypeId();
+
+        if (remains == null && imageTypeId >= 0 && imageTypeId < this.typeRemains.length) {
+            remains = this.typeRemains[imageTypeId];
+        }
+
+        if (remains != null) {
+            int slot = sprite.getPoolIndex();
+
+            this.remainsSprites.put(slot, new RemainsSprite(spritePool.getGeneration(slot), main.getPool().getGeneration(), remains));
+        }
+    }
+
+    /**
+     * Hears that an image's iscript created a sprite: a sprite created by a sprite of remains is one too, every image of it drawing the remains
+     * graphics.
+     *
+     * @param sprite       the sprite pool slot of the created sprite
+     * @param sourceSprite the sprite pool slot of the sprite whose image created it
+     */
+    public void onSpriteCreated(int sprite, int sourceSprite) {
+        if (this.remainsSprites.isEmpty()) {
+            return;
+        }
+
+        SpritePool pool = this.sprites.get();
+        RemainsSprite source = this.remainsSprites.get(sourceSprite);
+
+        if (pool != null && source != null && isHeld(pool, sourceSprite, source)) {
+            this.remainsSprites.put(sprite, new RemainsSprite(pool.getGeneration(sprite), EVERY_IMAGE, source.graphics));
+        }
+    }
+
+    /**
      * Replaces the graphics of one image while its slot holds it.
      *
      * @param image    an allocated image of the image pool
@@ -667,7 +906,7 @@ public final class ImageReplacements {
 
     /**
      * Forgets the graphics of the units whose slot was freed or holds another unit, the overrides of the images whose slot was freed or holds
-     * another image, and the plays that ended.
+     * another image, the sprites of remains whose slot was freed or holds another sprite, and the plays that ended.
      */
     public void removeFreedUnits() {
         if (!this.imageOverrides.isEmpty()) {
@@ -682,22 +921,30 @@ public final class ImageReplacements {
             this.imageOverrides.entrySet().removeIf(entry -> !isHeld(entry.getValue(), entry.getKey()) || entry.getValue().isEmpty());
         }
 
-        if (this.unitReplacements.isEmpty()) {
+        if (!this.remainsSprites.isEmpty()) {
+            SpritePool spritePool = this.sprites.get();
+
+            this.remainsSprites.entrySet().removeIf(entry -> spritePool == null || !isHeld(spritePool, entry.getKey(), entry.getValue()));
+        }
+
+        if (this.unitReplacements.isEmpty() && this.unitParts.isEmpty()) {
             return;
         }
 
         UnitPool pool = this.units.get();
 
         this.unitReplacements.removeIf(replacement -> pool == null || !isHeld(pool, replacement));
+        this.unitParts.removeIf(parts -> pool == null || !isHeld(pool, parts));
     }
 
     /**
-     * Finds the graphics a sprite image draws instead of its installed graphics: those of its play, those of the image, those of the unit it
-     * belongs to and its image type, else those of its image type; a shadow image of a main image with graphics made from a sheet draws their
-     * shadow graphics, else the main image's graphics.
+     * Finds the graphics a sprite image draws instead of its installed graphics: those of its play, those of the image, the remains graphics of
+     * a sprite of remains, those of the unit it belongs to and its image type, else those of its image type; a shadow image draws the shadow
+     * graphics of its sprite's unit or main image type, else, below a main image with graphics made from a sheet, their shadow graphics or the
+     * main image's graphics.
      *
      * @param image an image of a drawn sprite
-     * @return the graphics, or {@code null} for the installed graphics
+     * @return the graphics, {@link ImageGraphics#HIDDEN} for none, or {@code null} for the installed graphics
      */
     public @Nullable ImageGraphics findGraphics(@NotNull SpriteImage image) {
         ImageOverride override = this.findImageOverride(image);
@@ -713,6 +960,12 @@ public final class ImageReplacements {
             return graphics;
         }
 
+        ImageGraphics shadow = this.findShadowGraphics(image);
+
+        if (shadow != null) {
+            return shadow;
+        }
+
         SpriteImage main = this.findShadowMain(image);
 
         if (main == null) {
@@ -725,8 +978,42 @@ public final class ImageReplacements {
     }
 
     /**
-     * Finds the graphics of an image without its play and the shadow rule: those of the image, of the unit it belongs to and its image type,
-     * else those of its image type.
+     * Finds the shadow graphics a shadow image draws: those of the unit of its sprite, else those of the image type of its sprite's main image.
+     *
+     * @return the graphics, or {@code null} if the image is no shadow image below another main image or neither has shadow graphics
+     */
+    private @Nullable ImageGraphics findShadowGraphics(@NotNull SpriteImage image) {
+        if (image.getModifier() != SpriteImage.MODIFIER_SHADOW) {
+            return null;
+        }
+
+        Sprite sprite = image.getSprite();
+        SpriteImage main = sprite == null ? null : sprite.getMainImage();
+
+        if (main == null || main == image || main.getModifier() == SpriteImage.MODIFIER_SHADOW) {
+            return null;
+        }
+
+        if (!this.unitParts.isEmpty()) {
+            UnitPool pool = this.units.get();
+
+            if (pool != null) {
+                for (UnitParts parts : this.unitParts) {
+                    if (parts.shadow != null && isHeld(pool, parts) && isUnitSprite(parts.unit, sprite)) {
+                        return parts.shadow;
+                    }
+                }
+            }
+        }
+
+        int imageTypeId = main.getImageTypeId();
+
+        return imageTypeId >= 0 && imageTypeId < this.typeShadows.length ? this.typeShadows[imageTypeId] : null;
+    }
+
+    /**
+     * Finds the graphics of an image without its play and the shadow rule: those of the image, the remains graphics of a sprite of remains, those
+     * of the unit it belongs to and its image type, else those of its image type.
      *
      * @return the graphics, or {@code null} for the installed graphics
      */
@@ -735,6 +1022,14 @@ public final class ImageReplacements {
 
         if (override != null && override.graphics != null) {
             return override.graphics;
+        }
+
+        if (!this.remainsSprites.isEmpty()) {
+            ImageGraphics remains = this.findRemainsGraphics(image);
+
+            if (remains != null) {
+                return remains;
+            }
         }
 
         int imageTypeId = image.getImageTypeId();
@@ -757,6 +1052,26 @@ public final class ImageReplacements {
         }
 
         return this.typeGraphics[imageTypeId];
+    }
+
+    /**
+     * Finds the remains graphics of an image of a sprite of remains: an image of a sprite an image of the remains created, or an image the sprite
+     * of a dead unit got after the unit died.
+     *
+     * @return the graphics, or {@code null} if the image is no image of remains
+     */
+    private @Nullable ImageGraphics findRemainsGraphics(@NotNull SpriteImage image) {
+        Sprite sprite = image.getSprite();
+        RemainsSprite remains = sprite == null ? null : this.remainsSprites.get(sprite.getPoolIndex());
+        SpritePool pool = this.sprites.get();
+
+        if (remains == null || pool == null || !isHeld(pool, sprite.getPoolIndex(), remains)) {
+            return null;
+        }
+
+        return remains.imageGeneration == EVERY_IMAGE || image.getPool().getGeneration(image.getIndex()) > remains.imageGeneration
+               ? remains.graphics
+               : null;
     }
 
     private @Nullable UnitReplacement findUnitReplacement(@NotNull Unit unit, int imageTypeId) {

@@ -16,7 +16,9 @@ import org.mozilla.javascript.Scriptable;
  * memory gives, the script's setting winning for each item it set. The functions run in shared and local code; shared code sets the console of
  * every peer, local code only the local one. They change no game state.
  * <p>
- * {@code setVisible(visible)} and {@code isVisible()} (the whole console); {@code setDialogVisible(dialog, visible)},
+ * {@code setVisible(visible)} and {@code isVisible()} (the whole console); {@code setMinimapOnly(minimapOnly)} and {@code isMinimapOnly()} (the
+ * console shows only the minimap: no console art, and no dialog but the minimap and the text box unless the script showed it);
+ * {@code setDialogVisible(dialog, visible)},
  * {@code setDialogPosition(dialog, x, y)} (the top left in the classic {@code 640} by {@code 480} screen), {@code isDialogVisible(dialog)},
  * {@code setDialogAnchor(dialog, anchor)} (the interface edge the classic screen of the dialog's positions stands at, the order of
  * {@link ScrConsolePlacement.Anchor}: {@code 0} left, {@code 1} centered, {@code 2} right) for the dialogs of {@link ScrConsolePlacement.Dialog}
@@ -74,6 +76,12 @@ final class ScriptConsoleCore {
             return Context.getUndefinedValue();
         });
         ScriptCoreUtils.defineFunction(global, namespace, "isVisible", 0, (context, scope, thisObject, arguments) -> this.settings.isConsoleVisible());
+        ScriptCoreUtils.defineFunction(global, namespace, "setMinimapOnly", 1, (context, scope, thisObject, arguments) -> {
+            this.settings.setMinimapOnly(ScriptCoreUtils.readBoolean(arguments, 0));
+
+            return Context.getUndefinedValue();
+        });
+        ScriptCoreUtils.defineFunction(global, namespace, "isMinimapOnly", 0, (context, scope, thisObject, arguments) -> this.settings.isMinimapOnly());
         ScriptCoreUtils.defineFunction(global, namespace, "setDialogVisible", 2, (context, scope, thisObject, arguments) -> {
             this.settings.setDialogVisible(readDialog(arguments), ScriptCoreUtils.readBoolean(arguments, 1));
 

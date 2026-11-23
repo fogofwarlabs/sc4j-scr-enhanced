@@ -3,15 +3,15 @@ package org.fogofwarlabs.sc4j.screnhanced.script;
 import org.fogofwarlabs.sc4j.scr.game.extension.ScrSimulationPlugin;
 import org.fogofwarlabs.sc4j.scr.game.extension.simulation.SimulationDecision;
 import org.fogofwarlabs.sc4j.scr.game.extension.simulation.SimulationEvent;
+import org.fogofwarlabs.sc4j.scr.game.extension.simulation.SpriteCreatedEvent;
+import org.fogofwarlabs.sc4j.scr.game.extension.simulation.UnitDiedEvent;
 import org.fogofwarlabs.sc4j.scr.game.player.Player;
 import org.fogofwarlabs.sc4j.scr.game.player.PlayerTable;
 import org.fogofwarlabs.sc4j.scr.game.presentation.InterfaceLink;
 import org.fogofwarlabs.sc4j.scr.game.state.Game;
 import org.fogofwarlabs.sc4j.scr.game.trigger.TriggerContext;
-import org.fogofwarlabs.sc4j.screnhanced.graphics.ConsoleSettings;
-import org.fogofwarlabs.sc4j.screnhanced.graphics.ConsoleSettingsSource;
-import org.fogofwarlabs.sc4j.screnhanced.graphics.ImageReplacementSource;
-import org.fogofwarlabs.sc4j.screnhanced.graphics.ImageReplacements;
+import org.fogofwarlabs.sc4j.scr.game.unit.Unit;
+import org.fogofwarlabs.sc4j.screnhanced.graphics.*;
 import org.fogofwarlabs.sc4j.screnhanced.script.inspector.ScriptInspector;
 import org.fogofwarlabs.sc4j.screnhanced.script.runtime.ScriptRuntime;
 import org.jetbrains.annotations.NotNull;
@@ -31,11 +31,13 @@ import org.jetbrains.annotations.NotNull;
  * the script commands the script submitted go to the local player's outgoing turn ({@link ScriptRuntime#submitCommands}); the game's
  * {@link ScriptInputPlugin} sends those of the local code at once.
  * <p>
- * The classic image graphics of the game draw the image graphics the script replaces ({@link #getImageReplacements()}); every frame start first
- * forgets the replacements of units whose slot was freed. The classic console of the game merges the console settings of the script
- * ({@link #getConsoleSettings()}). A game the plugin runs cannot be saved: a saved game would lose the script's state.
+ * The classic image graphics of the game draw the image graphics the script replaces ({@link #getImageReplacements()}), and the classic terrain
+ * graphics the terrain pictures it replaces ({@link #getTerrainReplacements()}); every frame start first forgets the image replacements of units
+ * whose slot was freed. The classic console of the game merges the console settings of the script ({@link #getConsoleSettings()}). The
+ * adjustments of the simulation answer with the stats the script gives single units ({@link ScriptRuntime#getUnitStats()}). A game the plugin
+ * runs cannot be saved: a saved game would lose the script's state.
  */
-public final class ScriptSimulationPlugin implements ScrSimulationPlugin, ImageReplacementSource, ConsoleSettingsSource {
+public final class ScriptSimulationPlugin implements ScrSimulationPlugin, ImageReplacementSource, TerrainReplacementSource, ConsoleSettingsSource {
     private final @NotNull Game game;
     private final @NotNull ScriptRuntime runtime;
 
@@ -71,6 +73,14 @@ public final class ScriptSimulationPlugin implements ScrSimulationPlugin, ImageR
     @Override
     public @NotNull ImageReplacements getImageReplacements() {
         return this.runtime.getImageReplacements();
+    }
+
+    /**
+     * @return the terrain pictures the plugin replaces, the same instance for the whole game
+     */
+    @Override
+    public @NotNull TerrainReplacements getTerrainReplacements() {
+        return this.runtime.getTerrainReplacements();
     }
 
     /**
@@ -122,12 +132,20 @@ public final class ScriptSimulationPlugin implements ScrSimulationPlugin, ImageR
     /**
      * Called when something happens in the simulation, from inside the routine where it happens.
      * <p>
-     * The event goes into the runtime's queue with the current frame.
+     * A unit's death and a sprite an iscript created go to the image replacements, which give the remains their graphics
+     * ({@link ImageReplacements#onUnitDied}, {@link ImageReplacements#onSpriteCreated}). The event goes into the runtime's queue with the current
+     * frame.
      *
      * @param event the event; its kind is its class
      */
     @Override
     public void onEvent(@NotNull SimulationEvent event) {
+        if (event instanceof UnitDiedEvent died) {
+            this.runtime.getImageReplacements().onUnitDied(died.getUnit().getUnit());
+        } else if (event instanceof SpriteCreatedEvent created) {
+            this.runtime.getImageReplacements().onSpriteCreated(created.getSprite(), created.getSourceSprite());
+        }
+
         this.runtime.queueEvent(event, this.game.getCurrentFrame());
     }
 
@@ -142,6 +160,67 @@ public final class ScriptSimulationPlugin implements ScrSimulationPlugin, ImageR
     @Override
     public void decide(@NotNull SimulationDecision decision) {
         this.runtime.decide(decision);
+    }
+
+    /**
+     * Adjusts the maximum range of a unit's weapon after the native bonuses (the Bunker, the range upgrades and the heroes), wherever the
+     * simulation reads the range: the attack range tests, the target searches and the spell ranges of weapons.
+     * <p>
+     * The unit's weapon range bonus is added.
+     *
+     * @param unit   the attacking unit or turret
+     * @param weapon the weapons.dat entry
+     * @param range  the range in pixels
+     * @return the range in pixels, compared unsigned
+     */
+    @Override
+    public int adjustWeaponRange(@NotNull Unit unit, int weapon, int range) {
+        return this.runtime.getUnitStats().adjustWeaponRange(unit, range);
+    }
+
+    /**
+     * Adjusts a movement speed of a unit after its speed modifiers (the speed upgrades, Stim Packs and Ensnare): the {@code flingy.dat} top speed
+     * when the unit's movement fields are recalculated, and the speed each iscript {@code move} instruction gives a unit that its iscript moves,
+     * which also makes the top speed sampled from its Walking animation.
+     * <p>
+     * The unit's speed percentage applies.
+     *
+     * @param unit  the unit
+     * @param speed the speed in {@code 1/256} pixels per frame
+     * @return the speed in {@code 1/256} pixels per frame
+     */
+    @Override
+    public int adjustMovementSpeed(@NotNull Unit unit, int speed) {
+        return this.runtime.getUnitStats().adjustSpeed(unit, speed);
+    }
+
+    /**
+     * Adjusts the acceleration of a unit after its speed modifiers, when the unit's movement fields are recalculated.
+     * <p>
+     * The unit's speed percentage applies.
+     *
+     * @param unit         the unit
+     * @param acceleration the {@code flingy.dat} acceleration after the speed modifiers
+     * @return the acceleration, a WORD
+     */
+    @Override
+    public int adjustAcceleration(@NotNull Unit unit, int acceleration) {
+        return this.runtime.getUnitStats().adjustSpeed(unit, acceleration);
+    }
+
+    /**
+     * Adjusts the maximum hit points of a unit, wherever the game reads the maximum of a unit: the hit point limit, completion, repair,
+     * construction, the percentages of the triggers and the display.
+     * <p>
+     * The unit's own maximum hit points replace those of its type.
+     *
+     * @param unit             the unit
+     * @param maximumHitPoints the {@code units.dat} hit points of the unit's type in {@code 1/256} points
+     * @return the maximum hit points in {@code 1/256} points
+     */
+    @Override
+    public int adjustMaximumHitPoints(@NotNull Unit unit, int maximumHitPoints) {
+        return this.runtime.getUnitStats().adjustMaximumHitPoints(unit, maximumHitPoints);
     }
 
     /**

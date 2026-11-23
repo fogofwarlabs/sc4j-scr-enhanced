@@ -111,8 +111,9 @@ interface CoreEventRecord {
  * changes of a hook that returns go to the next hook and to the game.
  * <p>
  * Damage: unit, unitGeneration, unitType, owner, source, sourceGeneration, sourcePlayer, weapon; a hook may change amount and cancelled.
- * Order: unit, unitGeneration, unitType, owner, buildType, queued; a hook may change order, target, targetGeneration, targetX, targetY and
- * rejected. TargetAcquired: unit, unitGeneration, unitType, owner; a hook may change target and targetGeneration.
+ * Order: unit, unitGeneration, unitType, owner, requestedX, requestedY, buildType, queued, inserted; a hook may change order, target,
+ * targetGeneration, targetX, targetY and rejected. TargetAcquired: unit, unitGeneration, unitType, owner; a hook may change target and
+ * targetGeneration.
  */
 interface CoreDecisionRecord {
     /** The decision kind ({@link DecisionKind}). */
@@ -133,10 +134,16 @@ interface CoreDecisionRecord {
     readonly sourcePlayer?: number;
     /** The weapon type id. */
     readonly weapon?: number;
+    /** The x in map pixels the order was asked for: the position of a player command before it moved the target, else targetX. */
+    readonly requestedX?: number;
+    /** The y in map pixels the order was asked for. */
+    readonly requestedY?: number;
     /** The unit type the order builds or trains, -1 for none. */
     readonly buildType?: number;
     /** Whether the order is queued. */
     readonly queued?: boolean;
+    /** Whether a game routine puts the order into the unit's queue itself instead of issuing it. */
+    readonly inserted?: boolean;
     /** The damage in 1/256. */
     amount?: number;
     /** Whether the damage is cancelled. */
@@ -1849,6 +1856,51 @@ interface CoreUnit {
     getMaxEnergy(unit: number): number;
 
     /**
+     * Returns the maximum hit points in 1/256: the unit's own ({@link setMaxHp}), else those of its type in units.dat.
+     */
+    getMaxHp(unit: number): number;
+
+    /**
+     * Sets the unit's own maximum hit points while it lives; the hit points then stay at most the maximum. Repair, healing, regeneration,
+     * completion, the percentages and the display use it. Shared code only.
+     *
+     * @param hp the maximum in 1/256, at least 1, or -1 for that of the unit's type
+     * @throws RangeError if the maximum is below 1 and not -1
+     */
+    setMaxHp(unit: number, hp: number): void;
+
+    /**
+     * Returns the maximum range in pixels of a weapon of the unit, as the game uses it: the weapons.dat range, the Bunker, upgrade and hero
+     * bonuses and the unit's weapon range bonus.
+     */
+    getWeaponRange(unit: number, weapon: number): number;
+
+    /**
+     * Returns the range in pixels added to the maximum range of the unit's weapons, 0 without a bonus.
+     */
+    getWeaponRangeBonus(unit: number): number;
+
+    /**
+     * Sets the range in pixels added to the maximum range of the unit's weapons and of its turret's while it lives; negative shortens the
+     * range. Shared code only.
+     */
+    setWeaponRangeBonus(unit: number, pixels: number): void;
+
+    /**
+     * Returns the percentage of the unit's movement speeds and acceleration, 100 for the native ones.
+     */
+    getSpeedPercent(unit: number): number;
+
+    /**
+     * Sets the percentage of the unit's movement speeds and acceleration while it lives, applied after the speed upgrades, Stim Packs and
+     * Ensnare, and recalculates its speeds. Shared code only.
+     *
+     * @param percent the percentage, 0 to 10000
+     * @throws RangeError if the percentage is outside 0 to 10000
+     */
+    setSpeedPercent(unit: number, percent: number): void;
+
+    /**
      * Returns the unit's current order id.
      */
     getOrder(unit: number): number;
@@ -1997,13 +2049,23 @@ interface CoreUnit {
     addHangarCount(unit: number, count: number): boolean;
 
     /**
-     * Creates a unit at a position in pixels, as Create Unit does; a mineral field or a Vespene Geyser belongs to the neutral player. Shared
-     * code only.
+     * Creates a unit at a position in pixels, as Create Unit does, without the messages of a failed creation ("Unit unplaceable" and the
+     * owner's status line); a mineral field or a Vespene Geyser belongs to the neutral player. A type without the units.dat availability flag
+     * Unit Listing (the traps, the doors and other doodads) is not created. Shared code only.
      *
      * @param owner the player id, 0 to 11
      * @returns the new unit, -1 if none was created
      */
     create(unitType: number, owner: number, x: number, y: number): number;
+
+    /**
+     * Finds the position in pixels where {@link create} would place a unit, without creating it: the free position search around the requested
+     * position. Shared code only, as it uses the unit finder's working state.
+     *
+     * @param owner the player id, 0 to 11
+     * @returns [x, y], or null if {@link create} would create none there
+     */
+    findPlacement(unitType: number, owner: number, x: number, y: number): number[] | null;
 
     /**
      * Kills the unit, as Kill Unit does. Shared code only.
@@ -2187,6 +2249,13 @@ interface CoreUnit {
      * Finds the live units whose bounds hold a point in pixels, in the unit finder's order. Shared code only.
      */
     findAtPoint(x: number, y: number): number[];
+
+    /**
+     * Tests whether the unit can reach a map position: a unit that does not move on the ground always can, a ground unit when the position lies
+     * in its connected area of the ground ({@link CoreTerrain.isReachable}). Throws a TypeError when the game has no pathing regions; a position
+     * outside the map throws a RangeError.
+     */
+    canReach(unit: number, x: number, y: number): boolean;
 
     /**
      * Returns the Stim Packs timer in status steps of 8 frames.
@@ -2583,6 +2652,54 @@ interface CoreTerrain {
     setTile(tileX: number, tileY: number, value: number): void;
 
     /**
+     * Queues a change of every tile of a rectangle of tiles to one MTXM value ({@link setTile}). Shared code only. Throws a RangeError when the
+     * rectangle leaves the map.
+     *
+     * @param left   the left tile column
+     * @param top    the top tile row
+     * @param width  the width in tiles
+     * @param height the height in tiles
+     * @param value  the MTXM value
+     */
+    fillTiles(left: number, top: number, width: number, height: number, value: number): void;
+
+    /**
+     * Queues the changes that copy the tiles of a rectangle of tiles, as {@link getTile} reads them, onto the rectangle of the same size at
+     * another place; the rectangles may overlap. Shared code only. Throws a RangeError when a rectangle leaves the map.
+     *
+     * @param sourceLeft the left tile column of the copied rectangle
+     * @param sourceTop  the top tile row of the copied rectangle
+     * @param width      the width in tiles
+     * @param height     the height in tiles
+     * @param targetLeft the left tile column of the changed rectangle
+     * @param targetTop  the top tile row of the changed rectangle
+     */
+    copyTiles(sourceLeft: number, sourceTop: number, width: number, height: number, targetLeft: number, targetTop: number): void;
+
+    /**
+     * Queues a change of every tile of a rectangle of tiles ({@link setTile}) in one call. Shared code only. Throws a RangeError when the
+     * rectangle leaves the map, the number of values is not width times height or a value names no tile; then nothing is queued.
+     *
+     * @param left   the left tile column
+     * @param top    the top tile row
+     * @param width  the width in tiles
+     * @param height the height in tiles
+     * @param values the MTXM values, or objects whose id is the MTXM value, row by row from the top left tile
+     */
+    setTiles(left: number, top: number, width: number, height: number, values: ReadonlyArray<number | { readonly id: number }>): void;
+
+    /**
+     * Replaces the picture of the megatile an MTXM value shows, for every tile that shows the megatile, as presentation: the HD and HD2 graphics
+     * draw the image stretched over the tile with its alpha over the installed tile, the classic graphics its pixels quantized to the tileset
+     * palette where they are opaque. Shared code only, at the module top level or in onStart. Throws a RangeError when a side of the image is
+     * not a multiple of 32 pixels.
+     *
+     * @param value   the MTXM value
+     * @param imageId an image handle ({@link CoreResources.getImage}), as wide and high as a multiple of 32 pixels (32, 64 or 128)
+     */
+    replaceTileImage(value: number, imageId: number): void;
+
+    /**
      * @returns the number of CV5 groups of the map's tileset
      */
     getTileGroupCount(): number;
@@ -2627,6 +2744,23 @@ interface CoreTerrain {
      * Throws a TypeError when the map has no tile flags.
      */
     hasCreep(tileX: number, tileY: number): boolean;
+
+    /**
+     * Returns the position a move command to the map position x, y gives one ground unit of the unit type at fromX, fromY: x, y itself where the
+     * type stands, else walkable ground nearby on the side of fromX, fromY. Reads the pathing regions the game has now and throws a TypeError
+     * when it has none; a map position outside the map throws a RangeError.
+     *
+     * @param unitType the unit type id, 0 to 227
+     * @returns the position as [x, y] in map pixels
+     */
+    findWalkablePosition(x: number, y: number, fromX: number, fromY: number, unitType: number): number[];
+
+    /**
+     * Tests whether two map positions lie in one connected area of the ground, as the routines test that a ground unit can reach a position; an
+     * unwalkable position lies in an area of its own. Reads the pathing regions the game has now and throws a TypeError when it has none; a map
+     * position outside the map throws a RangeError.
+     */
+    isReachable(fromX: number, fromY: number, x: number, y: number): boolean;
 }
 
 /**
@@ -2647,6 +2781,19 @@ interface CoreCreep {
      * @returns 1 when it added a tile, 2 when it added none and an occupied tile blocked it, else 0
      */
     spread(unitType: number, x: number, y: number): number;
+
+    /**
+     * Adds creep to every tile of a rectangle of tiles that can take it, as a finished building adds creep under its footprint: a tile that has
+     * creep, cannot have creep (unbuildable, partially walkable or above an unbuildable tile) or is occupied by a building stays. Shared code
+     * only. Throws a RangeError when the rectangle leaves the map.
+     *
+     * @param left   the left tile column
+     * @param top    the top tile row
+     * @param width  the width in tiles
+     * @param height the height in tiles
+     * @returns the number of tiles that took creep
+     */
+    fillTiles(left: number, top: number, width: number, height: number): number;
 
     /**
      * Removes the creep of the tile at once and gives back the terrain below it. Shared code only.
@@ -3264,7 +3411,7 @@ interface CoreImageTypes extends CoreTypes {
      *
      * @param sheet              a sheet handle ({@link CoreResources.getSheet})
      * @param name               the name, or null for "Image" and the id
-     * @param script             the generic script, 0 (Still) or 1 (Projectile), or -1 with an image type to copy
+     * @param script             the generic script, 0 (Still), 1 (Projectile) or 2 (Unit), or -1 with an image type to copy
      * @param scriptImageType    the image type whose iscript, draw function, color shift, flags and overlay files the type copies, or -1
      * @param frameSets          the sheet's frame set for each frame set the script plays, or null for the sheet's own order
      * @param drawFunction       the draw function, 0 to 17, or -1 for that of the script
@@ -3342,7 +3489,7 @@ interface CoreResources {
 
     /**
      * Reads a PNG or DDS picture as a sheet of frames of one size, cut row by row from the top left; the same name and arguments return the same
-     * handle. The anims of a game's sheets take at most 128 MiB together.
+     * handle. The graphics made of a game's sheets take at most 256 MiB together, one byte per texel and layer of each distinct frame they show.
      *
      * @param frameWidth  the frame width in picture pixels
      * @param frameHeight the frame height in picture pixels
@@ -3359,6 +3506,16 @@ interface CoreResources {
      */
     getSheet(name: string, frameWidth: number, frameHeight: number, frameCount: number, directions: number, scale: number, anchorX: number,
              anchorY: number, teamColor: string | null, shadow: string | null, sd: number): number;
+
+    /**
+     * Returns a handle of a sheet's graphics in the order of frame sets, which graphics arguments take in place of a sheet handle; the same sheet
+     * and frame sets return the same handle.
+     *
+     * @param sheet     a sheet handle ({@link getSheet}); another handle or -1 throws a RangeError
+     * @param frameSets the sheet's frame set for each frame set an iscript plays; none, or one outside the sheet, throws a RangeError
+     * @returns the resource handle
+     */
+    getSheetFrames(sheet: number, frameSets: number[]): number;
 
     /**
      * @param sheet a sheet handle ({@link getSheet}); another handle or -1 throws a RangeError
@@ -3409,8 +3566,9 @@ interface CoreResources {
  * replaces on every player's game, local code on this machine only. The graphics are three handles of {@link CoreResources}, each -1 for none:
  * at least one is given, the HD anim has asset scale 4 and the HD2 anim 2, else a RangeError is thrown. The classic graphics draw the GRP, else
  * the installed GRP; HD draws the HD anim, else the HD2 anim; HD2 draws the HD2 anim, else the HD anim at half size; without an anim both draw
- * the GRP. A replacement wins over the GRP and anim pointers that EUD writes give the image. A sheet handle ({@link CoreResources.getSheet}) in
- * place of the GRP, with both anims -1, replaces with the sheet's GRP and its anim built when first drawn.
+ * the GRP. A replacement wins over the GRP and anim pointers that EUD writes give the image. A sheet handle ({@link CoreResources.getSheet}) or
+ * a handle of sheet frames ({@link CoreResources.getSheetFrames}) in place of the GRP, with both anims -1, replaces with the sheet's GRP and its
+ * anim built when first drawn.
  */
 interface CoreGraphics {
     /**
@@ -3436,6 +3594,50 @@ interface CoreGraphics {
      * Takes back the replacement of a live unit's images of the image type.
      */
     restoreUnitImage(unit: number, imageType: number): void;
+
+    /**
+     * Replaces the graphics of the shadow of the sprites whose main image is of the image type: their images drawn with the shadow draw
+     * function. All three handles -1 draw nothing.
+     */
+    replaceImageShadow(imageType: number, grp: number, hdAnim: number, hd2Anim: number): void;
+
+    /**
+     * Takes back the shadow graphics of the image type.
+     */
+    restoreImageShadow(imageType: number): void;
+
+    /**
+     * Replaces the graphics of the remains of the units whose sprite's main image is of the image type when they die: the images their sprite
+     * gets after the death and the sprites those images create, and so on. All three handles -1 draw nothing.
+     */
+    replaceImageRemains(imageType: number, grp: number, hdAnim: number, hd2Anim: number): void;
+
+    /**
+     * Takes back the remains graphics of the image type.
+     */
+    restoreImageRemains(imageType: number): void;
+
+    /**
+     * Replaces the graphics of a live unit's shadow while the unit lives; they win over those of the image type. All three handles -1 draw
+     * nothing.
+     */
+    replaceUnitShadow(unit: number, grp: number, hdAnim: number, hd2Anim: number): void;
+
+    /**
+     * Takes back the shadow graphics of a live unit.
+     */
+    restoreUnitShadow(unit: number): void;
+
+    /**
+     * Replaces the graphics of the remains a live unit leaves when it dies; they win over those of the image type. All three handles -1 draw
+     * nothing.
+     */
+    replaceUnitRemains(unit: number, grp: number, hdAnim: number, hd2Anim: number): void;
+
+    /**
+     * Takes back the remains graphics of a live unit.
+     */
+    restoreUnitRemains(unit: number): void;
 
     /**
      * Replaces the graphics of one image ({@link CoreImage}) while its slot holds it; they win over those of its unit and image type.
@@ -3930,7 +4132,8 @@ interface CoreButtons {
 
 /**
  * The drawing of one space ({@link Drawing}) with numbers: {@code core.screen} draws in interface units over the console, {@code core.world} in
- * map pixels above the units and {@code core.minimap} in map pixels on the minimap. Coordinates and sizes may have fractions; a negative size or
+ * map pixels above the units, {@code core.ground} in map pixels above the terrain and below the units and {@code core.minimap} in map pixels on
+ * the minimap. Coordinates and sizes may have fractions; a negative size or
  * thickness throws a RangeError. Colors are packed 0xAARRGGBB, 0 to 0xFFFFFFFF: a negative color throws a RangeError, a larger one a
  * TypeError. Fonts are 0 Small, 1 Medium, 2 Large, 3 Huge; alignments 0 Left, 1 Center, 2 Right. What one onRender call draws stays on screen
  * until the next call completes.
@@ -4100,6 +4303,17 @@ interface CoreConsole {
      * Returns false when the script hid the console, true otherwise.
      */
     isVisible(): boolean;
+
+    /**
+     * Sets whether the console shows only the minimap: the console art is not drawn and the map shows through, and every dialog but the
+     * minimap and the text box is hidden unless the script shows it.
+     */
+    setMinimapOnly(minimapOnly: boolean): void;
+
+    /**
+     * Returns true while the console shows only the minimap.
+     */
+    isMinimapOnly(): boolean;
 
     /**
      * Shows or hides a console dialog.
@@ -4364,6 +4578,8 @@ interface Core {
     readonly screen: CoreScreen;
     /** The drawing in map pixels above the units. */
     readonly world: CoreDrawing;
+    /** The drawing in map pixels above the terrain and below the units. */
+    readonly ground: CoreDrawing;
     /** The drawing in map pixels on the minimap. */
     readonly minimap: CoreDrawing;
     /** The console. */

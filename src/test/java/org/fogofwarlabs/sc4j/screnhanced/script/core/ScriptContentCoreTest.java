@@ -61,6 +61,10 @@ final class ScriptContentCoreTest {
      * The frames the shadow test runs after its start.
      */
     private static final int SHADOW_FRAMES = 6;
+    /**
+     * The frames the test of the Unit script runs.
+     */
+    private static final int UNIT_FRAMES = 64;
     private static final @NotNull String SCRIPT = """
                                                   var sheet = game.map.resources.getSheet('art/tree.png', {frameWidth: 16, frameHeight: 32, anchorY: 28,
                                                                                                            shadow: 'art/tree-shadow.png'});
@@ -294,6 +298,58 @@ final class ScriptContentCoreTest {
 
         Assertions.assertEquals(List.of("256 RangeError Image" + (ScrAddedGraphics.FIRST_IMAGE_ID + 255) + " true"), scenario.getInfoMessages(),
                                 scenario.getLines()::toString);
+    }
+
+    @Test
+    void unit_script_walks_through_its_frame_sets_and_needs_a_turning_sheet() throws IOException {
+        Assertions.assertNotNull(resources);
+
+        LiveScriptGameScenario scenario = LiveScriptGameScenario.startMelee(requireGameData(), """
+                                                                                               var walkerSheet = game.map.resources.getSheet('art/walker.png', {frameWidth: 16, frameHeight: 16,
+                                                                                                                                                                directions: 17});
+                                                                                               var boltSheet = game.map.resources.getSheet('art/bolt.png', {frameWidth: 8, frameHeight: 8});
+                                                                                               var sets = [];
+                                                                                               for (var index = 0; index < 15; index++) {
+                                                                                                   sets.push(index % 2);
+                                                                                               }
+                                                                                               var walker = ImageType.create({sheet: walkerSheet, script: ImageScript.Unit, frameSets: sets});
+                                                                                               var walkerSprite = SpriteType.create({image: walker, selectionCircle: 2, healthBarWidth: 32});
+                                                                                               UnitType.TerranSCV.setFlingyType(FlingyType.create({sprite: walkerSprite,
+                                                                                                                                                   base: UnitType.TerranSCV.getFlingyType()}));
+                                                                                               var errors = [];
+                                                                                               [function () { ImageType.create({sheet: boltSheet, script: ImageScript.Unit}); },
+                                                                                                function () { ImageType.create({sheet: walkerSheet, script: ImageScript.Unit}); }].forEach(function (fn) {
+                                                                                                   try {
+                                                                                                       fn();
+                                                                                                       errors.push('none');
+                                                                                                   } catch (e) {
+                                                                                                       errors.push(e.name);
+                                                                                                   }
+                                                                                               });
+                                                                                               var scv;
+                                                                                               var seen = {};
+                                                                                               function onStart() {
+                                                                                                   var human = game.players.getHumans()[0];
+                                                                                                   var position = game.units.findOne({type: UnitType.TerranCommandCenter, owner: human}).getPosition();
+                                                                                                   scv = game.units.create(UnitType.TerranSCV, human, Position.of(position.x, position.y + 96));
+                                                                                                   scv.issueOrder(Order.Move, Position.of(position.x + 320, position.y + 96));
+                                                                                                   log.info(errors.join(' '), walker.getClickable(), walker.getFullIscript());
+                                                                                               }
+                                                                                               function onFrame(frame) {
+                                                                                                   if (scv !== undefined && scv.exists()) {
+                                                                                                       seen[Math.floor(scv.getSprite().getMainImage().getFrame() / 17)] = true;
+                                                                                                   }
+                                                                                                   if (frame === 60) {
+                                                                                                       log.info(Object.keys(seen).sort(function (a, b) { return a - b; }).join(' '));
+                                                                                                   }
+                                                                                               }
+                                                                                               """, resources);
+
+        for (int frame = 0; frame < UNIT_FRAMES; frame++) {
+            scenario.stepFrame();
+        }
+
+        Assertions.assertEquals(List.of("RangeError RangeError 1 1", "0 1 2 3 4 5 6 7 8"), scenario.getInfoMessages(), scenario.getLines()::toString);
     }
 
     @Test

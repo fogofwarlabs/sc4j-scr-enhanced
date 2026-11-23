@@ -12,7 +12,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * What a map script sets on the console: whether the console is shown, the visibility and the top-left corner of each console dialog and of the
+ * What a map script sets on the console: whether the console is shown, whether it shows only the minimap, the visibility and the top-left
+ * corner of each console dialog and of the
  * controls of a dialog in the classic screen, the interface edge the classic screen of a dialog stands at ({@link ScrConsolePlacement.Anchor}),
  * the size of the minimap area, the pictures drawn instead of the console art files ({@link ScrConsoleArt}) and the pictures of the resource
  * icons. An item the script never set, or restored, is unset, so that the classic console ({@link ClassicConsoleGraphics}) shows what EUD memory
@@ -50,6 +51,7 @@ public final class ConsoleSettings {
     }
 
     private boolean consoleVisible;
+    private boolean minimapOnly;
 
     private final boolean @NotNull [] visibilitySet;
     private final boolean @NotNull [] visible;
@@ -70,6 +72,7 @@ public final class ConsoleSettings {
      */
     public ConsoleSettings() {
         this.consoleVisible = true;
+        this.minimapOnly    = false;
 
         this.visibilitySet = new boolean[DIALOG_COUNT];
         this.visible       = new boolean[DIALOG_COUNT];
@@ -115,11 +118,31 @@ public final class ConsoleSettings {
     }
 
     /**
-     * @return {@code true} if the script set the visibility, the position or the anchor of a dialog, the visibility or the position of a control,
-     * or the minimap size, {@code false} otherwise
+     * @return {@code true} if the console shows only the minimap: no console art and no dialog the script did not show, {@code false} otherwise
+     */
+    public boolean isMinimapOnly() {
+        return this.minimapOnly;
+    }
+
+    /**
+     * Sets whether the console shows only the minimap: the console art is not drawn and every dialog but the minimap and the text box is hidden
+     * unless the script set it shown.
+     *
+     * @param minimapOnly whether the console shows only the minimap
+     */
+    public void setMinimapOnly(boolean minimapOnly) {
+        if (this.minimapOnly != minimapOnly) {
+            this.minimapOnly = minimapOnly;
+            this.changeCount++;
+        }
+    }
+
+    /**
+     * @return {@code true} if the script set the console to show only the minimap, the visibility, the position or the anchor of a dialog, the
+     * visibility or the position of a control, or the minimap size, {@code false} otherwise
      */
     public boolean hasDialogSettings() {
-        if (this.minimapSize != ScrConsolePlacement.MINIMAP_SIZE) {
+        if (this.minimapOnly || this.minimapSize != ScrConsolePlacement.MINIMAP_SIZE) {
             return true;
         }
 
@@ -148,10 +171,15 @@ public final class ConsoleSettings {
 
     /**
      * @param dialog the dialog
-     * @return {@code true} if the script showed the dialog or never set it, {@code false} if it hid it
+     * @return {@code true} if the script showed the dialog or never set it, {@code false} if it hid it or, for a dialog but the minimap and the
+     * text box, never set it while the console shows only the minimap
      */
     public boolean isDialogVisible(ScrConsolePlacement.@NotNull Dialog dialog) {
-        return !this.visibilitySet[dialog.ordinal()] || this.visible[dialog.ordinal()];
+        if (this.visibilitySet[dialog.ordinal()]) {
+            return this.visible[dialog.ordinal()];
+        }
+
+        return !this.minimapOnly || dialog == ScrConsolePlacement.Dialog.MINIMAP || dialog == ScrConsolePlacement.Dialog.TEXT_BOX;
     }
 
     /**

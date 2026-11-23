@@ -6,6 +6,7 @@ import org.fogofwarlabs.sc4j.engine.resource.graphics.SpriteSheet;
 import org.fogofwarlabs.sc4j.scr.game.sprite.Sprite;
 import org.fogofwarlabs.sc4j.scr.game.sprite.SpriteImage;
 import org.fogofwarlabs.sc4j.scr.game.sprite.SpriteImagePool;
+import org.fogofwarlabs.sc4j.scr.game.sprite.SpritePool;
 import org.fogofwarlabs.sc4j.scr.game.unit.Unit;
 import org.fogofwarlabs.sc4j.scr.game.unit.UnitPool;
 import org.jetbrains.annotations.NotNull;
@@ -18,11 +19,13 @@ import java.util.Arrays;
 /**
  * Tests the image graphics a script replaces: GRPs and anims read from byte ranges and checked, the HD and HD2 rule of the graphics, the
  * graphics of an image type and of one unit's images, the unit's subunit, the end of a unit's graphics when its slot is freed, the frame sets an
- * image plays and an image type loops, and the shadow of a main image that draws a sheet.
+ * image plays and an image type loops, the shadow of a main image that draws a sheet, the shadow graphics of a unit and of an image type, and the
+ * remains of a dead unit.
  */
 final class ImageReplacementsTest {
     private static final int UNIT_POOL_CAPACITY = 8;
     private static final int IMAGE_POOL_CAPACITY = 8;
+    private static final int SPRITE_POOL_CAPACITY = 4;
     private static final int UNIT_INDEX = 3;
     private static final int OTHER_UNIT_INDEX = 4;
     private static final int SUBUNIT_INDEX = 5;
@@ -56,11 +59,17 @@ final class ImageReplacementsTest {
     }
 
     private static @NotNull SpriteImage addImage(@NotNull SpriteImagePool images, @NotNull Unit unit, int imageType) {
-        SpriteImage image = images.allocate();
         Sprite sprite = unit.getSpriteOrNull();
 
-        Assertions.assertNotNull(image);
         Assertions.assertNotNull(sprite);
+
+        return addImage(images, sprite, imageType);
+    }
+
+    private static @NotNull SpriteImage addImage(@NotNull SpriteImagePool images, @NotNull Sprite sprite, int imageType) {
+        SpriteImage image = images.allocate();
+
+        Assertions.assertNotNull(image);
 
         image.initializeNativeStorage(imageType, 0, 0, 0, 0);
         sprite.insertHeadImage(image);
@@ -96,7 +105,8 @@ final class ImageReplacementsTest {
         UnitPool pool = new UnitPool(UNIT_POOL_CAPACITY);
         SpriteImagePool images = new SpriteImagePool(IMAGE_POOL_CAPACITY);
         int[] frame = {PLAY_START};
-        ImageReplacements replacements = new ImageReplacements(() -> pool, () -> frame[0], IMAGE_TYPE_COUNT, imageType -> imageType == IMAGE_TYPE);
+        ImageReplacements replacements = new ImageReplacements(() -> pool, () -> null,
+                                                               () -> frame[0], IMAGE_TYPE_COUNT, imageType -> imageType == IMAGE_TYPE);
         Unit unit = allocateUnit(pool, UNIT_INDEX, GENERATION);
         SpriteImage turning = addImage(images, unit, IMAGE_TYPE);
         SpriteImage still = addImage(images, unit, OTHER_IMAGE_TYPE);
@@ -132,7 +142,7 @@ final class ImageReplacementsTest {
     void set_image_frame_should_end_a_play_and_a_play_should_end_a_held_frame() {
         UnitPool pool = new UnitPool(UNIT_POOL_CAPACITY);
         SpriteImagePool images = new SpriteImagePool(IMAGE_POOL_CAPACITY);
-        ImageReplacements replacements = new ImageReplacements(() -> pool, () -> PLAY_START, IMAGE_TYPE_COUNT, imageType -> false);
+        ImageReplacements replacements = new ImageReplacements(() -> pool, () -> null, () -> PLAY_START, IMAGE_TYPE_COUNT, imageType -> false);
         SpriteImage image = addImage(images, allocateUnit(pool, UNIT_INDEX, GENERATION), IMAGE_TYPE);
 
         replacements.playImage(image, new int[]{4}, FRAME_TIME, true, null);
@@ -155,7 +165,7 @@ final class ImageReplacementsTest {
         UnitPool pool = new UnitPool(UNIT_POOL_CAPACITY);
         SpriteImagePool images = new SpriteImagePool(IMAGE_POOL_CAPACITY);
         int[] frame = {0};
-        ImageReplacements replacements = new ImageReplacements(() -> pool, () -> frame[0], IMAGE_TYPE_COUNT, imageType -> false);
+        ImageReplacements replacements = new ImageReplacements(() -> pool, () -> null, () -> frame[0], IMAGE_TYPE_COUNT, imageType -> false);
         SpriteImage image = addImage(images, allocateUnit(pool, UNIT_INDEX, GENERATION), IMAGE_TYPE);
 
         replacements.setTypeAnimation(IMAGE_TYPE, new int[]{1, 2}, 4);
@@ -180,7 +190,7 @@ final class ImageReplacementsTest {
     void find_graphics_should_draw_the_sheet_shadow_for_a_shadow_image_of_its_main_image() throws IOException {
         UnitPool pool = new UnitPool(UNIT_POOL_CAPACITY);
         SpriteImagePool images = new SpriteImagePool(IMAGE_POOL_CAPACITY);
-        ImageReplacements replacements = new ImageReplacements(() -> pool, () -> 0, IMAGE_TYPE_COUNT, imageType -> false);
+        ImageReplacements replacements = new ImageReplacements(() -> pool, () -> null, () -> 0, IMAGE_TYPE_COUNT, imageType -> false);
         Unit unit = allocateUnit(pool, UNIT_INDEX, GENERATION);
         Sprite sprite = unit.getSpriteOrNull();
         SpriteImage shadow = addImage(images, unit, OTHER_IMAGE_TYPE);
@@ -202,6 +212,78 @@ final class ImageReplacementsTest {
         Assertions.assertSame(sheet.getShadow(), replacements.findGraphics(shadow));
         Assertions.assertEquals(0, replacements.findImageFrame(shadow), "the shadow draws the main image's frame");
         Assertions.assertSame(sheet, replacements.findGraphics(main));
+    }
+
+    @Test
+    void find_graphics_should_draw_the_shadow_graphics_of_the_unit_else_of_the_main_image_type() throws IOException {
+        UnitPool pool = new UnitPool(UNIT_POOL_CAPACITY);
+        SpriteImagePool images = new SpriteImagePool(IMAGE_POOL_CAPACITY);
+        ImageReplacements replacements = new ImageReplacements(() -> pool);
+        Unit unit = allocateUnit(pool, UNIT_INDEX, GENERATION);
+        Unit other = allocateUnit(pool, OTHER_UNIT_INDEX, GENERATION);
+        Sprite sprite = unit.getSpriteOrNull();
+        Sprite otherSprite = other.getSpriteOrNull();
+        SpriteImage shadow = addImage(images, unit, OTHER_IMAGE_TYPE);
+        SpriteImage main = addImage(images, unit, IMAGE_TYPE);
+        SpriteImage otherShadow = addImage(images, other, OTHER_IMAGE_TYPE);
+        SpriteImage otherMain = addImage(images, other, IMAGE_TYPE);
+        ImageGraphics graphics = createGraphics(replacements);
+
+        Assertions.assertNotNull(sprite);
+        Assertions.assertNotNull(otherSprite);
+
+        shadow.setModifier(SpriteImage.MODIFIER_SHADOW);
+        otherShadow.setModifier(SpriteImage.MODIFIER_SHADOW);
+        sprite.setMainImage(main);
+        otherSprite.setMainImage(otherMain);
+        replacements.setTypeShadow(IMAGE_TYPE, ImageGraphics.HIDDEN);
+        replacements.setUnitShadow(unit, graphics);
+
+        Assertions.assertSame(graphics, replacements.findGraphics(shadow), "the unit's shadow graphics win");
+        Assertions.assertSame(ImageGraphics.HIDDEN, replacements.findGraphics(otherShadow), "the main image type's shadow graphics");
+        Assertions.assertNull(replacements.findGraphics(main), "the main image keeps its graphics");
+
+        replacements.setTypeShadow(IMAGE_TYPE, null);
+        replacements.setUnitShadow(unit, null);
+
+        Assertions.assertNull(replacements.findGraphics(shadow));
+        Assertions.assertNull(replacements.findGraphics(otherShadow));
+    }
+
+    @Test
+    void remains_draw_the_images_a_dead_unit_gets_and_the_sprites_they_create() {
+        UnitPool pool = new UnitPool(UNIT_POOL_CAPACITY);
+        SpritePool sprites = new SpritePool(SPRITE_POOL_CAPACITY);
+        SpriteImagePool images = new SpriteImagePool(IMAGE_POOL_CAPACITY);
+        ImageReplacements replacements = new ImageReplacements(() -> pool, () -> sprites, () -> 0, IMAGE_TYPE_COUNT, imageType -> false);
+        Unit unit = allocateUnit(pool, UNIT_INDEX, GENERATION);
+        Sprite sprite = sprites.allocate();
+        Sprite remnant = sprites.allocate();
+        Sprite effect = sprites.allocate();
+
+        Assertions.assertNotNull(sprite);
+        Assertions.assertNotNull(remnant);
+        Assertions.assertNotNull(effect);
+
+        unit.setSprite(sprite);
+
+        SpriteImage main = addImage(images, sprite, IMAGE_TYPE);
+
+        sprite.setMainImage(main);
+        replacements.setTypeRemains(IMAGE_TYPE, ImageGraphics.HIDDEN);
+        replacements.onSpriteCreated(effect.getPoolIndex(), sprite.getPoolIndex());
+        replacements.onUnitDied(unit);
+
+        SpriteImage death = addImage(images, sprite, OTHER_IMAGE_TYPE);
+        SpriteImage remnantImage = addImage(images, remnant, OTHER_IMAGE_TYPE);
+        SpriteImage effectImage = addImage(images, effect, OTHER_IMAGE_TYPE);
+
+        replacements.onSpriteCreated(remnant.getPoolIndex(), sprite.getPoolIndex());
+
+        Assertions.assertNull(replacements.findGraphics(main), "an image from before the death keeps its graphics");
+        Assertions.assertSame(ImageGraphics.HIDDEN, replacements.findGraphics(death), "an image of the death animation");
+        Assertions.assertSame(ImageGraphics.HIDDEN, replacements.findGraphics(remnantImage), "a sprite the dead unit's images created");
+        Assertions.assertNull(replacements.findGraphics(effectImage), "a sprite created before the death");
     }
 
     @Test

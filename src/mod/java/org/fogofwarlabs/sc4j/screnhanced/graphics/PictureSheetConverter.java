@@ -1,14 +1,13 @@
 package org.fogofwarlabs.sc4j.screnhanced.graphics;
 
 import org.fogofwarlabs.sc4j.base.exception.Exceptions;
+import org.fogofwarlabs.sc4j.engine.resource.graphics.Picture;
 import org.fogofwarlabs.sc4j.scr.data.format.image.ImageFileWriterUtils;
+import org.fogofwarlabs.sc4j.scr.data.format.terrain.TerrainTileset;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Converts the frames of a {@link PictureSheet} into the formats the renderers and the simulation read: an SD GRP quantized to a tileset palette
@@ -89,20 +88,22 @@ public final class PictureSheetConverter {
     private static final @NotNull String TEAM_COLOR_LAYER = "teamcolor";
 
     /**
-     * Counts the bytes of the block-compressed layers of the anims of a sheet: one byte per texel and layer of the atlas of every frame, the
-     * shadow anim included.
+     * Counts the bytes of the block-compressed layers of the anims of frames of a sheet ({@link #createAnim}): one byte per texel and layer of
+     * the atlas cell of each distinct sheet frame, the shadow anim included.
      *
      * @param layout    the frame layout
+     * @param frames    the sheet frame of each anim frame
      * @param teamColor whether the sheet has a team color picture
      * @param shadow    whether the sheet has a shadow picture
      * @return the bytes
      */
-    public static long countAnimBytes(@NotNull SheetLayout layout, boolean teamColor, boolean shadow) {
+    public static long countAnimBytes(@NotNull SheetLayout layout, int @NotNull [] frames, boolean teamColor, boolean shadow) {
         int factor = getTexelFactor(layout.getScale());
         long cell = (long) roundToBlock(layout.getFrameWidth() * factor) * roundToBlock(layout.getFrameHeight() * factor);
         int layers = 1 + (teamColor ? 1 : 0) + (shadow ? 1 : 0);
+        long distinct = Arrays.stream(frames).distinct().count();
 
-        return cell * layout.getFrameCount() * layers;
+        return cell * distinct * layers;
     }
 
     /**
@@ -283,6 +284,64 @@ public final class PictureSheetConverter {
         }
 
         return ImageFileWriterUtils.encodeGrp(layout.getCanvasWidth(), layout.getCanvasHeight(), canvases);
+    }
+
+    /**
+     * Quantizes a terrain picture to the classic pixels of a megatile: each of the {@code 32x32} map pixels is the block of picture pixels it
+     * covers ({@code width / 32} by {@code height / 32}); it is drawn when the block's mean alpha is at least {@value #OPAQUE_ALPHA}, in the
+     * nearest palette entry from {@value #FIRST_COLOR_INDEX} to {@value #LAST_COLOR_INDEX}. The pixels depend on the picture and the palette only.
+     *
+     * @param picture  the picture, its width and height multiples of {@code 32}
+     * @param coverage receives the {@code 32x32} coverage, rows from the top, {@code 1} where a pixel is drawn and {@code 0} elsewhere
+     * @return the {@code 32x32} palette indices, rows from the top, {@code 0} where no pixel is drawn
+     * @throws IllegalArgumentException if a side of the picture is not a multiple of {@code 32} or the coverage is not {@code 32x32}
+     */
+    public byte @NotNull [] quantizeTile(@NotNull Picture picture, byte @NotNull [] coverage) {
+        int tileSize = TerrainTileset.TILE_SIZE;
+
+        if (picture.getWidth() % tileSize != 0 || picture.getHeight() % tileSize != 0 || coverage.length != tileSize * tileSize) {
+            throw Exceptions.newIllegalArgumentException("A tile picture is a multiple of {0} pixels wide and high, not {1}x{2}.", tileSize,
+                                                         picture.getWidth(), picture.getHeight());
+        }
+
+        int blockWidth = picture.getWidth() / tileSize;
+        int blockHeight = picture.getHeight() / tileSize;
+        int blockPixels = blockWidth * blockHeight;
+        byte[] pixels = new byte[tileSize * tileSize];
+
+        for (int mapY = 0; mapY < tileSize; mapY++) {
+            for (int mapX = 0; mapX < tileSize; mapX++) {
+                long alpha = 0;
+                long red = 0;
+                long green = 0;
+                long blue = 0;
+
+                for (int y = mapY * blockHeight; y < (mapY + 1) * blockHeight; y++) {
+                    for (int x = mapX * blockWidth; x < (mapX + 1) * blockWidth; x++) {
+                        int color = picture.getColor().getValue(y * picture.getWidth() + x);
+                        int pixelAlpha = color >>> ALPHA_SHIFT;
+
+                        alpha += pixelAlpha;
+                        red += (color >>> RED_SHIFT & BYTE_MASK) * pixelAlpha;
+                        green += (color >>> GREEN_SHIFT & BYTE_MASK) * pixelAlpha;
+                        blue += (color & BYTE_MASK) * pixelAlpha;
+                    }
+                }
+
+                int offset = mapY * tileSize + mapX;
+
+                if (alpha < (long) OPAQUE_ALPHA * blockPixels) {
+                    coverage[offset] = 0;
+
+                    continue;
+                }
+
+                pixels[offset]   = (byte) this.findNearest((int) (red / alpha), (int) (green / alpha), (int) (blue / alpha));
+                coverage[offset] = 1;
+            }
+        }
+
+        return pixels;
     }
 
     /**

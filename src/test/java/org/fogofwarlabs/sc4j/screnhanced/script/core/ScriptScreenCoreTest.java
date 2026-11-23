@@ -24,10 +24,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Tests the drawing of map scripts ({@code onRender}, {@code screen}, {@code core.screen}, {@code core.world}, {@code core.minimap}) on a game
- * without game data: the draw list of each space in call order, the refusal outside {@code onRender}, the dropped list of a call over its
- * budget, the local screen and its scale, the colour, font and alignment values, the images, the classic screen pixels and the call without a
- * submitter, as in a replay.
+ * Tests the drawing of map scripts ({@code onRender}, {@code screen}, {@code core.screen}, {@code core.world}, {@code core.ground},
+ * {@code core.minimap}) on a game without game data: the draw list of each space in call order, the refusal outside {@code onRender}, the
+ * dropped list of a call over its budget, the local screen and its scale, the colour, font and alignment values, the images, the classic screen
+ * pixels and the call without a submitter, as in a replay.
  */
 final class ScriptScreenCoreTest {
     private static final int MAP_TILE_SIZE = 4;
@@ -88,6 +88,7 @@ final class ScriptScreenCoreTest {
                                                                                screen.minimap.drawRectangle(0, 0, 32, 32);
                                                                                screen.drawRectangle(1, 1, 2, 2, {thickness: 0.5, color: Color.Blue});
                                                                                screen.world.drawImage(image, 1, 2, {width: 64, height: 32});
+                                                                               screen.ground.fillRectangle(32, 64, 96, 32, Color.Blue);
                                                                            }
                                                                            """, createResources());
         ScriptRuntime runtime = scenario.getRuntime();
@@ -112,6 +113,7 @@ final class ScriptScreenCoreTest {
                                 DrawListCheck.describe(list, ScrDrawList.Space.WORLD));
         Assertions.assertEquals(List.of("fillCircle 64.0 64.0 8.0 ff00ff00", "drawRectangle 0.0 0.0 32.0 32.0 1.0 ffffffff"),
                                 DrawListCheck.describe(list, ScrDrawList.Space.MINIMAP));
+        Assertions.assertEquals(List.of("fillRectangle 32.0 64.0 96.0 32.0 ff0000ff"), DrawListCheck.describe(list, ScrDrawList.Space.GROUND));
 
         runtime.callRender();
 

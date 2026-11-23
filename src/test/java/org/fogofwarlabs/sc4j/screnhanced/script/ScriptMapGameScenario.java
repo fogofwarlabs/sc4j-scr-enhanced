@@ -82,20 +82,33 @@ final class ScriptMapGameScenario {
      */
     static @NotNull ScriptMapGameScenario startMelee(@NotNull GameData gameData, @NotNull Path folder, @Nullable String mainSource,
                                                      @NotNull Map<String, byte[]> resources, boolean protectedMap) throws IOException {
-        Path map = ExternalInput.INSTALLATION.getPath().resolve(MAP_PATH);
-
-        if (mainSource != null) {
-            ScriptPackage scriptPackage = ScriptPackage.create(ScriptManifest.parse(MANIFEST.getBytes(StandardCharsets.UTF_8)),
-                                                               Map.of(MAIN_NAME, mainSource.getBytes(StandardCharsets.UTF_8)), resources);
-            ScriptPackage packedPackage = protectedMap ? ScriptProtector.protectPackage(scriptPackage, new ScriptSourceMap()) : scriptPackage;
-            byte[] packed = ScriptStorageUtils.writePackage(Files.readAllBytes(map), MAP_PATH, packedPackage, protectedMap);
-
-            map = folder.resolve(PACKED_MAP_NAME);
-            Files.createDirectories(folder);
-            Files.write(map, packed);
-        }
+        Path map = mainSource == null ? ExternalInput.INSTALLATION.getPath().resolve(MAP_PATH) : packMap(folder, mainSource, resources, protectedMap);
 
         return new ScriptMapGameScenario(gameData, map);
+    }
+
+    /**
+     * Packs a main script and resources into the installed two-player map.
+     *
+     * @param folder       the folder of the packed map, created when missing
+     * @param mainSource   the text of the main script
+     * @param resources    the resource contents by name
+     * @param protectedMap whether the packed map is protected, with the main script in protected form
+     * @return the packed map
+     */
+    static @NotNull Path packMap(@NotNull Path folder, @NotNull String mainSource, @NotNull Map<String, byte[]> resources,
+                                 boolean protectedMap) throws IOException {
+        Path map = ExternalInput.INSTALLATION.getPath().resolve(MAP_PATH);
+        ScriptPackage scriptPackage = ScriptPackage.create(ScriptManifest.parse(MANIFEST.getBytes(StandardCharsets.UTF_8)),
+                                                           Map.of(MAIN_NAME, mainSource.getBytes(StandardCharsets.UTF_8)), resources);
+        ScriptPackage packedPackage = protectedMap ? ScriptProtector.protectPackage(scriptPackage, new ScriptSourceMap()) : scriptPackage;
+        byte[] packed = ScriptStorageUtils.writePackage(Files.readAllBytes(map), MAP_PATH, packedPackage, protectedMap);
+        Path packedMap = folder.resolve(PACKED_MAP_NAME);
+
+        Files.createDirectories(folder);
+        Files.write(packedMap, packed);
+
+        return packedMap;
     }
 
     /**

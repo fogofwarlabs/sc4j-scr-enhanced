@@ -81,7 +81,7 @@
                            'AlmostBuilt', 'Built', 'Landing', 'LiftOff', 'IsWorking', 'WorkingToIdle', 'WarpIn', 'Unused3', 'StarEditInit',
                            'Disable', 'Burrow', 'Unburrow', 'Enable'];
     // The generic scripts of the image types a script registers, in the ids of core.imageType.create.
-    var IMAGE_SCRIPT_NAMES = ['Still', 'Projectile'];
+    var IMAGE_SCRIPT_NAMES = ['Still', 'Projectile', 'Unit'];
     // The game frames each frame set of a loop is shown when the loop gives none.
     var DEFAULT_FRAME_TIME = 1;
 

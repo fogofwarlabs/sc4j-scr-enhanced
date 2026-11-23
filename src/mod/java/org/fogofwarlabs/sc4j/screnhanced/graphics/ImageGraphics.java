@@ -15,8 +15,16 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * Graphics made from a sheet ({@link PictureSheet}) know the frames of their frame sets and may carry the graphics of the sheet's shadow picture,
  * which a shadow image of the same sprite draws ({@link ImageReplacements#findGraphics}).
+ * <p>
+ * The graphics {@link #HIDDEN} have no GRP and no anim: an image that draws them draws nothing.
  */
 public final class ImageGraphics implements ScrImageAnimation {
+    /**
+     * The graphics that draw nothing.
+     */
+    public static final @NotNull ImageGraphics HIDDEN = new ImageGraphics(null, null, null, 0, null);
+
+
     /**
      * Creates an {@link ImageGraphics} instance.
      *
@@ -125,6 +133,13 @@ public final class ImageGraphics implements ScrImageAnimation {
      */
     public boolean isSheet() {
         return this.directions != 0;
+    }
+
+    /**
+     * @return {@code true} if the graphics draw nothing ({@link #HIDDEN}), {@code false} otherwise
+     */
+    public boolean isHidden() {
+        return this.grp == null && this.hdAnim == null && this.hd2Anim == null;
     }
 
     /**

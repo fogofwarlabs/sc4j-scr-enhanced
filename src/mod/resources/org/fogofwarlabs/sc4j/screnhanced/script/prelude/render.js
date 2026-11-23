@@ -1,6 +1,6 @@
 // The drawing of the upper layer: the globals Font, Align and Graphics, and the screen object that onRender receives, over core.screen,
-// core.world and core.minimap. Colors are Color numbers, fonts and alignments their constants; the options objects become the positional
-// arguments of core.
+// core.world, core.ground and core.minimap. Colors are Color numbers, fonts and alignments their constants; the options objects become the
+// positional arguments of core.
 (function (core, prelude) {
     'use strict';
 
@@ -125,6 +125,7 @@
         return Math.round(value * scale) / scale;
     };
     screen.world = freeze(createDrawing(core.world));
+    screen.ground = freeze(createDrawing(core.ground));
     screen.minimap = freeze(createDrawing(core.minimap));
     freeze(screen);
 

@@ -22,7 +22,8 @@ import org.junit.jupiter.api.Test;
  * its dialog, a cleared visible flag hides the control, a written picture size hides the dialog and shows its picture at its rectangle, and a
  * written console transparency shows the console and the pictures only at its shown pixels, a console area owner shows its written picture, and
  * written resource icons replace the installed ones; a map script's console settings, those of the controls included, win over EUD memory for
- * the items they set until the script restores them.
+ * the items they set until the script restores them; a console that shows only the minimap draws no console art and hides the dialogs the script
+ * did not show.
  */
 final class ClassicConsoleGraphicsTest {
     private static final int WIDTH = ClassicMemory.SCREEN_WIDTH;
@@ -407,6 +408,39 @@ final class ClassicConsoleGraphicsTest {
         settings.setConsoleVisible(false);
 
         Assertions.assertTrue(graphics.isConsoleHidden());
+    }
+
+    @Test
+    void minimap_only_draws_no_console_art_and_hides_the_dialogs_the_script_did_not_show() {
+        ConsoleSettings settings = new ConsoleSettings();
+        ClassicConsoleGraphics graphics = new ClassicConsoleGraphics(() -> settings);
+        Picture art = new Picture(2, 1, PixelLayer.ofRgba(new int[]{SCRIPT_COLOR, 0}));
+
+        graphics.onAddressSpaceCreated(new ClassicMemoryView(createSpace()));
+        settings.setMinimapOnly(true);
+        settings.setDialogVisible(ScrConsolePlacement.Dialog.MENU, true);
+        settings.setArt(ScrConsoleArt.CONSOLE_LEFT, art);
+
+        ScrConsolePlacement placement = graphics.findConsolePlacement();
+        Picture noArt = graphics.findConsoleArt(ScrConsoleArt.CONSOLE);
+
+        Assertions.assertNotNull(placement);
+        Assertions.assertNotNull(noArt);
+        Assertions.assertEquals(0, noArt.getColor().getValue(0), "a transparent pixel");
+        Assertions.assertSame(art, graphics.findConsoleArt(ScrConsoleArt.CONSOLE_LEFT), "a picture the script set stays");
+
+        for (ScrConsolePlacement.Dialog dialog : ScrConsolePlacement.Dialog.values()) {
+            boolean shown = dialog == ScrConsolePlacement.Dialog.MINIMAP || dialog == ScrConsolePlacement.Dialog.TEXT_BOX ||
+                            dialog == ScrConsolePlacement.Dialog.MENU;
+
+            Assertions.assertEquals(!shown, placement.isDialogHidden(dialog), dialog.name());
+            Assertions.assertEquals(shown, settings.isDialogVisible(dialog), dialog.name());
+        }
+
+        settings.setMinimapOnly(false);
+
+        Assertions.assertNull(graphics.findConsoleArt(ScrConsoleArt.CONSOLE));
+        Assertions.assertFalse(graphics.findConsolePlacement().isDialogHidden(ScrConsolePlacement.Dialog.COMMAND_CARD));
     }
 
     @Test

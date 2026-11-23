@@ -14,6 +14,7 @@ import org.fogofwarlabs.sc4j.scr.data.resource.ScrModFiles;
 import org.fogofwarlabs.sc4j.scr.data.resource.ScrModGraphics;
 import org.fogofwarlabs.sc4j.scr.game.extension.ScrContentExtension;
 import org.fogofwarlabs.sc4j.scr.game.state.GameData;
+import org.fogofwarlabs.sc4j.screnhanced.graphics.SheetLayout;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -37,6 +38,13 @@ import java.util.WeakHashMap;
  * {@code StillShadow} does the same after creating the shadow image below; {@code Shadow} follows the main image's frame each frame; and
  * {@code Projectile} has the shape of a native bullet script: Init shows frame {@code 0} and signals the bullet's order a frame later, Death
  * applies the weapon ({@code domissiledmg}) and ends a frame later. Their headers copy the header type of a native bullet script.
+ * <p>
+ * {@code Unit} and {@code UnitShadow} (which first creates the shadow image below) are the script of a unit that turns, on the header type of
+ * the Terran Marine's script, with the frame sets of {@link #UNIT_FRAME_SETS} and no sound: it stands at {@link #UNIT_STAND_SET}, walks through
+ * the {@value #UNIT_WALK_SETS} frame sets from {@link #UNIT_WALK_SET}, one per frame, without moving the unit itself (a unit whose flingy type
+ * moves it by the iscript stands still); attacks show {@link #UNIT_AIM_SET}, then {@link #UNIT_FIRE_SET} with the weapon the target needs
+ * ({@code attack}), and cast spells the same way ({@code castspell}); Death shows the {@value #UNIT_DEATH_SETS} frame sets from
+ * {@link #UNIT_DEATH_SET}, two frames each, and ends.
  */
 public final class ScriptContentExtension implements ScrContentExtension {
     /**
@@ -51,6 +59,38 @@ public final class ScriptContentExtension implements ScrContentExtension {
      * The reserved flingy entries.
      */
     public static final int FLINGY_COUNT = 128;
+    /**
+     * The frame set a unit of the {@code Unit} script stands at.
+     */
+    public static final int UNIT_STAND_SET = 0;
+    /**
+     * The first walking frame set of the {@code Unit} script.
+     */
+    public static final int UNIT_WALK_SET = 1;
+    /**
+     * The walking frame sets of the {@code Unit} script.
+     */
+    public static final int UNIT_WALK_SETS = 8;
+    /**
+     * The frame set of the {@code Unit} script that aims an attack.
+     */
+    public static final int UNIT_AIM_SET = UNIT_WALK_SET + UNIT_WALK_SETS;
+    /**
+     * The frame set of the {@code Unit} script that fires an attack.
+     */
+    public static final int UNIT_FIRE_SET = UNIT_AIM_SET + 1;
+    /**
+     * The first dying frame set of the {@code Unit} script.
+     */
+    public static final int UNIT_DEATH_SET = UNIT_FIRE_SET + 1;
+    /**
+     * The dying frame sets of the {@code Unit} script.
+     */
+    public static final int UNIT_DEATH_SETS = 4;
+    /**
+     * The frame sets the {@code Unit} script plays.
+     */
+    public static final int UNIT_FRAME_SETS = UNIT_DEATH_SET + UNIT_DEATH_SETS;
 
     /**
      * The mod file folder of the frames of the reserved images.
@@ -65,6 +105,27 @@ public final class ScriptContentExtension implements ScrContentExtension {
     private static final int PROJECTILE_HEADER_TYPE = 2;
     private static final int ANIMATION_INIT = 0;
     private static final int ANIMATION_DEATH = 1;
+    private static final int ANIMATION_GROUND_ATTACK_INIT = 2;
+    private static final int ANIMATION_AIR_ATTACK_INIT = 3;
+    private static final int ANIMATION_GROUND_ATTACK_REPEAT = 5;
+    private static final int ANIMATION_AIR_ATTACK_REPEAT = 6;
+    private static final int ANIMATION_CAST_SPELL = 7;
+    private static final int ANIMATION_GROUND_ATTACK_TO_IDLE = 8;
+    private static final int ANIMATION_AIR_ATTACK_TO_IDLE = 9;
+    private static final int ANIMATION_WALKING = 11;
+    private static final int ANIMATION_WALKING_TO_IDLE = 12;
+    /**
+     * The game frames a dying frame set of the {@code Unit} script is shown.
+     */
+    private static final int UNIT_DEATH_WAIT = 2;
+    /**
+     * The frames of a frame set of an image that turns, the step of a frame set's first frame.
+     */
+    private static final int TURNING_DIRECTIONS = SheetLayout.TURNING_DIRECTIONS;
+    /**
+     * The order signal a cast spell gives when its animation is done.
+     */
+    private static final int SPELL_ORDER_SIGNAL = 2;
     /**
      * The wait of an idle loop, in frames.
      */
@@ -74,6 +135,7 @@ public final class ScriptContentExtension implements ScrContentExtension {
      */
     private static final int BULLET_ORDER_SIGNAL = 1;
     private static final @NotNull String LOOP_LABEL = "loop";
+    private static final @NotNull String WALK_LABEL = "walk";
 
     /**
      * The entries of each installed data, by its added graphics, which its game copies share.
@@ -92,9 +154,11 @@ public final class ScriptContentExtension implements ScrContentExtension {
         private final int stillScript;
         private final int stillShadowScript;
         private final int projectileScript;
+        private final int unitScript;
+        private final int unitShadowScript;
 
-        private Entries(int firstImage, int shadowImage, int firstSprite, int firstFlingy, int stillScript, int stillShadowScript,
-                        int projectileScript) {
+        private Entries(int firstImage, int shadowImage, int firstSprite, int firstFlingy,
+                        int stillScript, int stillShadowScript, int projectileScript, int unitScript, int unitShadowScript) {
             this.firstImage  = firstImage;
             this.shadowImage = shadowImage;
             this.firstSprite = firstSprite;
@@ -103,6 +167,8 @@ public final class ScriptContentExtension implements ScrContentExtension {
             this.stillScript       = stillScript;
             this.stillShadowScript = stillShadowScript;
             this.projectileScript  = projectileScript;
+            this.unitScript        = unitScript;
+            this.unitShadowScript  = unitShadowScript;
         }
 
         /**
@@ -155,6 +221,20 @@ public final class ScriptContentExtension implements ScrContentExtension {
         }
 
         /**
+         * @return the id of the {@code Unit} script
+         */
+        public int getUnitScript() {
+            return this.unitScript;
+        }
+
+        /**
+         * @return the id of the {@code UnitShadow} script
+         */
+        public int getUnitShadowScript() {
+            return this.unitShadowScript;
+        }
+
+        /**
          * Returns the mod file path of the frames of a reserved image, which a game gives its frames under ({@link GameData#putGameFile}).
          *
          * @param imageId a reserved image id
@@ -203,6 +283,82 @@ public final class ScriptContentExtension implements ScrContentExtension {
         }
 
         return builder.build();
+    }
+
+    /**
+     * Creates a {@code Unit} script on the header of a native unit script: the animations of a unit that turns ({@link ScriptContentExtension}),
+     * every other animation an idle loop.
+     *
+     * @param baseScript the native unit script whose header type the script copies
+     * @param iscript    the installed iscript
+     * @param init       the Init animation
+     * @return the script
+     */
+    private static @NotNull ScrAddedScript createUnitScript(int baseScript, @NotNull IscriptFile iscript, @NotNull IscriptCode init) {
+        int stand = UNIT_STAND_SET * TURNING_DIRECTIONS;
+        int aim = UNIT_AIM_SET * TURNING_DIRECTIONS;
+        int fire = UNIT_FIRE_SET * TURNING_DIRECTIONS;
+        IscriptCode idle = createLoop(new IscriptCode.Builder());
+        IscriptCode toIdle = createLoop(new IscriptCode.Builder().instruction(IscriptOpcodes.PLAYFRAM, stand));
+        IscriptCode attackRepeat = createAttack(new IscriptCode.Builder(), fire, aim);
+        IscriptCode attackInit = createAttack(new IscriptCode.Builder().instruction(IscriptOpcodes.PLAYFRAM, aim), fire, aim);
+        IscriptCode castSpell = createLoop(new IscriptCode.Builder().instruction(IscriptOpcodes.NOBRKCODESTART)
+                                                                    .instruction(IscriptOpcodes.WAIT, 1)
+                                                                    .instruction(IscriptOpcodes.CASTSPELL)
+                                                                    .instruction(IscriptOpcodes.PLAYFRAM, fire)
+                                                                    .instruction(IscriptOpcodes.WAIT, 1)
+                                                                    .instruction(IscriptOpcodes.PLAYFRAM, aim)
+                                                                    .instruction(IscriptOpcodes.NOBRKCODEEND)
+                                                                    .instruction(IscriptOpcodes.GOTOREPEATATTK)
+                                                                    .instruction(IscriptOpcodes.SIGORDER, SPELL_ORDER_SIGNAL)
+                                                                    .instruction(IscriptOpcodes.PLAYFRAM, stand));
+        IscriptCode.Builder walk = new IscriptCode.Builder().label(WALK_LABEL);
+        IscriptCode.Builder death = new IscriptCode.Builder();
+
+        for (int set = UNIT_WALK_SET; set < UNIT_WALK_SET + UNIT_WALK_SETS; set++) {
+            walk.instruction(IscriptOpcodes.PLAYFRAM, set * TURNING_DIRECTIONS).instruction(IscriptOpcodes.WAIT, 1);
+        }
+
+        for (int set = UNIT_DEATH_SET; set < UNIT_DEATH_SET + UNIT_DEATH_SETS; set++) {
+            death.instruction(IscriptOpcodes.PLAYFRAM, set * TURNING_DIRECTIONS).instruction(IscriptOpcodes.WAIT, UNIT_DEATH_WAIT);
+        }
+
+        ScrAddedScript.Builder builder = new ScrAddedScript.Builder(baseScript, iscript);
+        int count = builder.build().getAnimationCount();
+
+        for (int animation = ANIMATION_DEATH + 1; animation < count; animation++) {
+            builder.setAnimation(animation, idle);
+        }
+
+        return builder.setAnimation(ANIMATION_INIT, init)
+                      .setAnimation(ANIMATION_DEATH, death.instruction(IscriptOpcodes.END).build())
+                      .setAnimation(ANIMATION_GROUND_ATTACK_INIT, attackInit)
+                      .setAnimation(ANIMATION_AIR_ATTACK_INIT, attackInit)
+                      .setAnimation(ANIMATION_GROUND_ATTACK_REPEAT, attackRepeat)
+                      .setAnimation(ANIMATION_AIR_ATTACK_REPEAT, attackRepeat)
+                      .setAnimation(ANIMATION_CAST_SPELL, castSpell)
+                      .setAnimation(ANIMATION_GROUND_ATTACK_TO_IDLE, toIdle)
+                      .setAnimation(ANIMATION_AIR_ATTACK_TO_IDLE, toIdle)
+                      .setAnimation(ANIMATION_WALKING, walk.jump(WALK_LABEL).build())
+                      .setAnimation(ANIMATION_WALKING_TO_IDLE, toIdle)
+                      .build();
+    }
+
+    /**
+     * Creates the code of an attack after optional leading instructions: a frame later the weapon the target needs fires at the fire frame, the
+     * aim frame follows a frame later, and the image waits for the next attack.
+     */
+    private static @NotNull IscriptCode createAttack(@NotNull IscriptCode.Builder builder, int fire, int aim) {
+        return builder.instruction(IscriptOpcodes.WAIT, 1)
+                      .instruction(IscriptOpcodes.NOBRKCODESTART)
+                      .instruction(IscriptOpcodes.ATTACK)
+                      .instruction(IscriptOpcodes.PLAYFRAM, fire)
+                      .instruction(IscriptOpcodes.WAIT, 1)
+                      .instruction(IscriptOpcodes.PLAYFRAM, aim)
+                      .instruction(IscriptOpcodes.NOBRKCODEEND)
+                      .instruction(IscriptOpcodes.GOTOREPEATATTK)
+                      .instruction(IscriptOpcodes.IGNOREREST)
+                      .build();
     }
 
     /**
@@ -268,7 +424,8 @@ public final class ScriptContentExtension implements ScrContentExtension {
         int baseFlingy = installed.getUnitTypes().getFlingyType(ScrUnitIds.TERRAN_MARINE);
         int baseSprite = installed.getFlingyTypes().getSprite(baseFlingy);
         int baseImage = installed.getSpriteTypes().getImage(baseSprite);
-        int baseShadow = findShadowImage(iscript, installed.getImageTypes().getIscript(baseImage));
+        int baseUnitScript = installed.getImageTypes().getIscript(baseImage);
+        int baseShadow = findShadowImage(iscript, baseUnitScript);
         int baseScript = findProjectileScript(iscript);
         byte[] placeholder = ImageFileWriterUtils.encodeGrp(1, 1, List.of(new byte[]{1}));
         ScrModFiles files = path -> placeholder.clone();
@@ -312,6 +469,12 @@ public final class ScriptContentExtension implements ScrContentExtension {
         IscriptCode stillShadow = createLoop(new IscriptCode.Builder().instruction(IscriptOpcodes.IMGUL, shadowImage, 0, 0)
                                                                       .instruction(IscriptOpcodes.PLAYFRAM, 0));
         int stillShadowScript = graphics.addScript(createScript(baseScript, iscript, stillShadow, death, idle));
+        int stand = UNIT_STAND_SET * TURNING_DIRECTIONS;
+        IscriptCode unitInit = createLoop(new IscriptCode.Builder().instruction(IscriptOpcodes.PLAYFRAM, stand));
+        IscriptCode unitShadowInit = createLoop(new IscriptCode.Builder().instruction(IscriptOpcodes.IMGUL, shadowImage, 0, 0)
+                                                                         .instruction(IscriptOpcodes.PLAYFRAM, stand));
+        int unitScript = graphics.addScript(createUnitScript(baseUnitScript, iscript, unitInit));
+        int unitShadowScript = graphics.addScript(createUnitScript(baseUnitScript, iscript, unitShadowInit));
         int firstSprite = -1;
 
         for (int index = 0; index < SPRITE_COUNT; index++) {
@@ -334,6 +497,7 @@ public final class ScriptContentExtension implements ScrContentExtension {
             firstFlingy = index == 0 ? flingy : firstFlingy;
         }
 
-        ENTRIES.put(graphics, new Entries(firstImage, shadowImage, firstSprite, firstFlingy, stillScript, stillShadowScript, projectileScript));
+        ENTRIES.put(graphics, new Entries(firstImage, shadowImage, firstSprite, firstFlingy,
+                                          stillScript, stillShadowScript, projectileScript, unitScript, unitShadowScript));
     }
 }

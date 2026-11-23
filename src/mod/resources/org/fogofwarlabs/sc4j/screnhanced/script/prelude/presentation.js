@@ -19,6 +19,7 @@
     var imagePrototype = prelude.imagePrototype;
     var soundPrototype = prelude.soundPrototype;
     var readGraphicsIds = prelude.readGraphicsIds;
+    var readOptions = prelude.readOptions;
     var commandCard = prelude.commandCard;
 
     var create = Object.create;
@@ -38,31 +39,79 @@
         return requireObject(imageType, imageTypePrototype, 'An image type').id;
     }
 
+    // The handle ids of the graphics of a shadow or of remains: null draws nothing.
+    function readPartIds(images) {
+        return images === null ? [NONE, NONE, NONE] : readGraphicsIds(images);
+    }
+
     // The graphics of the images of the game.
     var imageGraphics = freeze({
-                                   // Replaces the graphics of every image of an image type with {sd: a GRP, hd: an HD anim, hd2: an HD2 anim}.
-                                   replace: function (imageType, images) {
+                                   // Replaces the graphics of every image of an image type with {sd: a GRP, hd: an HD anim, hd2: an HD2 anim} or
+                                   // {sheet, frameSets}, null to keep them; options {shadow, remains} replace the graphics of the shadow and of the
+                                   // remains of the sprites whose main image is of the type, null for none.
+                                   replace: function (imageType, images, options) {
                                        var imageTypeId = requireObject(imageType, imageTypePrototype, 'An image type').id;
-                                       var ids = readGraphicsIds(images);
+                                       var values = readOptions(options);
+                                       var ids;
 
-                                       core.graphics.replaceImage(imageTypeId, ids[0], ids[1], ids[2]);
+                                       if (images !== null) {
+                                           ids = readGraphicsIds(images);
+                                           core.graphics.replaceImage(imageTypeId, ids[0], ids[1], ids[2]);
+                                       }
+
+                                       if (values.shadow !== undefined) {
+                                           ids = readPartIds(values.shadow);
+                                           core.graphics.replaceImageShadow(imageTypeId, ids[0], ids[1], ids[2]);
+                                       }
+
+                                       if (values.remains !== undefined) {
+                                           ids = readPartIds(values.remains);
+                                           core.graphics.replaceImageRemains(imageTypeId, ids[0], ids[1], ids[2]);
+                                       }
                                    },
-                                   // Draws the installed graphics of an image type again.
+                                   // Draws the installed graphics of an image type, its shadow and its remains again.
                                    restore: function (imageType) {
-                                       core.graphics.restoreImage(requireObject(imageType, imageTypePrototype, 'An image type').id);
-                                   },
-                                   // Replaces the graphics of a unit's images of an image type, by default that of its main image now, while the unit
-                                   // lives.
-                                   replaceUnit: function (unit, images, imageType) {
-                                       var id = requireUnitId(unit);
-                                       var imageTypeId = readUnitImageType(unit, imageType);
-                                       var ids = readGraphicsIds(images);
+                                       var imageTypeId = requireObject(imageType, imageTypePrototype, 'An image type').id;
 
-                                       core.graphics.replaceUnitImage(id, imageTypeId, ids[0], ids[1], ids[2]);
+                                       core.graphics.restoreImage(imageTypeId);
+                                       core.graphics.restoreImageShadow(imageTypeId);
+                                       core.graphics.restoreImageRemains(imageTypeId);
                                    },
-                                   // Draws the graphics of the image type again for a unit's images.
+                                   // Replaces the graphics of a unit's images of an image type, by default that of its main image now, null to keep
+                                   // them; options {imageType, shadow, remains} also replace the graphics of the unit's shadow and remains, null for
+                                   // none. They last while the unit lives, the remains until they are gone.
+                                   replaceUnit: function (unit, images, options) {
+                                       var id = requireUnitId(unit);
+
+                                       if (isObjectOf(options, imageTypePrototype)) {
+                                           throw new TypeError('The options are {imageType, shadow, remains}, not an image type.');
+                                       }
+
+                                       var values = readOptions(options);
+                                       var ids;
+
+                                       if (images !== null) {
+                                           ids = readGraphicsIds(images);
+                                           core.graphics.replaceUnitImage(id, readUnitImageType(unit, values.imageType), ids[0], ids[1], ids[2]);
+                                       }
+
+                                       if (values.shadow !== undefined) {
+                                           ids = readPartIds(values.shadow);
+                                           core.graphics.replaceUnitShadow(id, ids[0], ids[1], ids[2]);
+                                       }
+
+                                       if (values.remains !== undefined) {
+                                           ids = readPartIds(values.remains);
+                                           core.graphics.replaceUnitRemains(id, ids[0], ids[1], ids[2]);
+                                       }
+                                   },
+                                   // Draws the graphics of the image type again for a unit's images, its shadow and its remains.
                                    restoreUnit: function (unit, imageType) {
-                                       core.graphics.restoreUnitImage(requireUnitId(unit), readUnitImageType(unit, imageType));
+                                       var id = requireUnitId(unit);
+
+                                       core.graphics.restoreUnitImage(id, readUnitImageType(unit, imageType));
+                                       core.graphics.restoreUnitShadow(id);
+                                       core.graphics.restoreUnitRemains(id);
                                    }
                                });
 
@@ -173,6 +222,14 @@
                                  },
                                  isVisible: function () {
                                      return core.console.isVisible();
+                                 },
+                                 // Shows only the minimap: no console art, and no dialog but the minimap and the text box unless the script
+                                 // shows it.
+                                 setMinimapOnly: function (minimapOnly) {
+                                     core.console.setMinimapOnly(minimapOnly === true);
+                                 },
+                                 isMinimapOnly: function () {
+                                     return core.console.isMinimapOnly();
                                  },
                                  getControl: function (control) {
                                      var id = requireObject(control, consoleControlPrototype, 'A console control').id;

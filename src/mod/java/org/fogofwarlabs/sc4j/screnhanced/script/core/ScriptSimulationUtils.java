@@ -177,8 +177,11 @@ final class ScriptSimulationUtils {
                 putUnit(values, pool, "target", order.getTargetUnit());
                 putNumber(values, "targetX", order.getPositionX());
                 putNumber(values, "targetY", order.getPositionY());
+                putNumber(values, "requestedX", order.getRequestedPositionX());
+                putNumber(values, "requestedY", order.getRequestedPositionY());
                 putNumber(values, "buildType", order.getTargetUnitType());
                 values.put("queued", values, order.isQueued());
+                values.put("inserted", values, order.isInserted());
                 values.put("rejected", values, order.isRejected());
             }
             case TargetAcquisitionDecision target -> {
