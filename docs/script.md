@@ -11,6 +11,7 @@ How to write map scripts for SC:R Enhanced. The full API reference is the declar
 - [5. Examples](#5-examples)
 - [6. Map protection](#6-map-protection)
 - [7. Limits](#7-limits)
+- [8. Map compatibility](#8-map-compatibility)
 
 ## 1. What it is
 
@@ -24,21 +25,27 @@ A map script is JavaScript stored inside the map file. SC:R Enhanced runs it wit
 
 ### 2.1 The script tool
 
-The script tool is the tool `script` of the mod `scr-enhanced`. Run it with the SC4J install's `SC4J.bat` (Linux `SC4J`, Windows console `SC4J-cli.exe`):
+The script tool is the tool `script` of the mod `scr-enhanced`. Run it with the start file of the SC4J install: `SC4J.bat` or the console program `SC4J-cli.exe` on Windows, `SC4J` on Linux and macOS.
 
 ```powershell
 SC4J.bat tool scr-enhanced script <command> [arguments]
 ```
 
-Relative paths are relative to the current folder.
+```sh
+./SC4J tool scr-enhanced script <command> [arguments]
+```
+
+The examples below use `SC4J.bat` and `.\gradlew.bat`; on Linux and macOS write `./SC4J` (or the path of the install's `SC4J`) and `./gradlew`. Relative paths are relative to the current folder.
 
 | Command | What it does |
 |---|---|
 | `init <folder>` | writes a new script folder; the folder must be absent or empty |
+| `init <folder> --ts` | writes a new TypeScript project (section 2.6); the folder must be absent or empty |
 | `check <folder>` | prints the errors and warnings of a script folder |
 | `run <map> --script <folder> [--melee] [--watch] [--inspect[=<port>]] [--install <folder>]` | packs the folder into a copy of the map and starts SC:R Enhanced on it |
 | `pack <map> --script <folder> -o <output>` | writes the map with the script package to `<output>`; an old package is replaced |
 | `pack <map> --script <folder> -o <output> --protect` | the same, as a protected map (chapter 6) |
+| `pack <map> --script <folder> -o <output> --compatibility <mark>` | the same, with the compatibility mark `enhanced-only`, `compatible` or `auto` (chapter 8) |
 | `unpack <map> -o <folder>` | writes the script package of a map to a folder that is absent or empty |
 | `trace <source map> --at <script>:<line>` | prints the original line of a line of a protected script |
 | `trace <source map> --log <file>` | prints a file, such as a log, with the original lines |
@@ -51,6 +58,10 @@ In a clone of this repository the same commands run with Gradle, paths relative 
 .\gradlew.bat runScriptTool --args="init my-map"
 ```
 
+```sh
+./gradlew runScriptTool --args="init my-map"
+```
+
 ### 2.2 A script folder
 
 ```powershell
@@ -59,14 +70,14 @@ SC4J.bat tool scr-enhanced script init my-map
 
 | File | Content |
 |---|---|
-| `manifest.json` | `{"name": "my-map", "main": "main.js", "api": "1"}`: the package name (the folder name), the script that runs first, the script API version |
+| `manifest.json` | `{"name": "my-map", "main": "main.js", "api": "1"}`: the package name (the folder name), the script that runs first, the script API version; optionally `"compatibility"` (chapter 8) |
 | `main.js` | the main script, an example with `onStart` and `onFrame` |
 | `jsconfig.json` | editor settings: only the declaration files, scripts checked, every file its own module |
 | `scr-enhanced.d.ts` | declarations of the upper API, the runtime and the standard objects |
 | `core.d.ts` | declarations of the lower API `core` |
 | `resources/` | files the script reads: GRP, anim, PNG and DDS, WAV and Ogg sounds, and any file as text or JSON |
 
-Only `manifest.json`, the `.js` files outside `resources/` and the files under `resources/` go into the map.
+Only `manifest.json`, the `.js` files outside `resources/` and the files under `resources/` go into the map. Hidden files and folders, whose names start with `.` (such as `.DS_Store` and `.git`), stay out of the map and do not count when `init` and `unpack` need an empty folder. A `.js` file that names a source map file, as tsc writes it, takes the source map with it (section 2.6).
 
 ### 2.3 Editor completion
 
@@ -105,25 +116,28 @@ Every module can define hooks (section 3.1). Call `require` in shared code (chap
 
 ### 2.5 Logs
 
-`log.info`, `log.warn` and `log.error` write to the SC:R Enhanced log `<install>/userdata/logs/scr-enhanced/sc4j.log`, prefixed with the module name. Script errors go there too, with the script file and line that threw them (`main.js:12`); for an error of an API call, the line of the call.
+`log.info`, `log.warn` and `log.error` write to the SC:R Enhanced log `<install>/userdata/logs/scr-enhanced/sc4j.log`, prefixed with the module name. Script errors go there too, with the script file and line that threw them (`main.js:12`); for an error of an API call, the line of the call. For TypeScript, the error names the TypeScript file and line (`src/main.ts:12`, section 2.6).
 
 ### 2.6 TypeScript
 
 Scripts can be written in TypeScript and compiled with `tsc` (checked with TypeScript 5.9). The map holds only the compiled JavaScript.
 
+```powershell
+SC4J.bat tool scr-enhanced script init my-map --ts
+```
+
 ```text
 my-map/                 the TypeScript project
-  tsconfig.json
-  src/main.ts           the sources
-  src/bonus.ts
-  script/               the script folder that is packed: made by init, filled by tsc
+  tsconfig.json         the tsc settings
+  scr-enhanced.d.ts     declarations of the upper API, the runtime and the standard objects
+  core.d.ts             declarations of the lower API core
+  src/main.ts           the main source, an example with defineHooks
+  script/               the script folder that is packed, filled by tsc
     manifest.json       {"name": "my-map", "main": "main.js", "api": "1"}
-    scr-enhanced.d.ts
-    core.d.ts
     resources/
 ```
 
-Make `script/` with `init my-map/script`, set the name in its `manifest.json`, delete its `main.js` and `jsconfig.json`, and add `my-map/tsconfig.json`:
+`tsconfig.json`:
 
 ```json
 {
@@ -135,16 +149,17 @@ Make `script/` with `init my-map/script`, set the name in its `manifest.json`, d
         "types": [],
         "strict": true,
         "noImplicitReturns": true,
+        "sourceMap": true,
         "rootDir": "src",
         "outDir": "script"
     },
-    "files": ["script/scr-enhanced.d.ts", "script/core.d.ts"],
+    "files": ["scr-enhanced.d.ts", "core.d.ts"],
     "include": ["src/**/*.ts"]
 }
 ```
 
-- `files` names the declaration files, because tsc leaves the files of `outDir` out of `include`.
-- tsc writes `main.js` and the other modules next to `manifest.json` and copies no other file: `manifest.json` and `resources/` stay in `script/`.
+- tsc writes `main.js` and its source map `main.js.map` next to `manifest.json`, and the same for each other source. It copies no other file: `manifest.json` and `resources/` stay in `script/`.
+- `pack` and `run` read `script/` only. The `.ts` sources and the declaration files lie outside it and stay out of the map. A `.js.map` file is not packed itself: its `.js` file takes it inside the map.
 - Define the hooks with `defineHooks` (section 3.1): tsc types their parameters and reports a misspelled hook name. tsc does not know that the runtime calls top-level function hooks: `noUnusedLocals` reports them, and a misspelled name goes unnoticed.
 - Import modules with relative paths (`./bonus`).
 
@@ -193,7 +208,12 @@ What does not:
 - Targets ES2015 and later keep forms Rhino lacks: `class`, spread, rest elements in destructuring and `for (const ...)` from ES2015, `async` functions from ES2017, object spread from ES2018. `let` and `const` in loops then follow Rhino's loop rules (chapter 7). `check` reports these.
 - `noEmitHelpers` leaves the helpers out, and the scripts fail with a `ReferenceError`. `importHelpers` loads them from a module `tslib`: copy `tslib.js` of the npm package `tslib` into the script folder.
 - `module` other than `commonjs`, `import()`, and the libraries of browsers and Node.js.
-- Errors and logs name the line of the compiled JavaScript (`main.js:72`), not of the TypeScript source.
+
+Errors in the log name the TypeScript file and line, relative to the project, such as `onFrame failed: Error: x (src/main.ts:12)`. This needs `"sourceMap": true` or `"inlineSourceMap": true`; without a source map an error names the compiled line (`main.js:72`). A line that tsc adds on its own, such as a helper, has no TypeScript line: its error names the compiled line too. `check` reports a source map file that a `.js` file names but that is missing or broken, and `pack` refuses it.
+
+`pack` keeps only the lines of each source map: one entry per line, no names, no columns, no source contents, so the map and its replays stay small. `run` keeps the whole source map for DevTools. A protected map holds none: its errors name the protected lines, and `trace` gives their TypeScript lines (chapter 6).
+
+`mapRoot` is not supported: keep each `.js.map` file next to its `.js` file.
 
 ### 2.7 DevTools
 
@@ -233,7 +253,7 @@ What the console has:
 
 The debugger:
 
-- The Sources panel lists the scripts of the map by file name, read only. With TypeScript it shows the compiled `.js` files.
+- The Sources panel lists the scripts of the map by file name, read only. With TypeScript it shows the compiled `.js` files, and DevTools gets the source map of each one (section 2.6). With `"inlineSources": true` in `tsconfig.json` the source maps of `run` also hold the TypeScript sources; `pack` leaves them out.
 - Breakpoints on a line, also with a condition; `debugger` statements; Pause on exceptions, which also pauses at an error that the script catches.
 - At a pause: the call stack, the variables of each frame and the functions around it, the module and the globals; Step over, into and out, Resume; console code runs in the selected frame.
 - A pause holds the game thread: the game and its window stop until Resume, and in a multiplayer game every player waits or drops.
@@ -708,6 +728,7 @@ What `--protect` does:
 - Every line of the protected script comes from one original line, so error lines can be traced back.
 - The map is marked protected, and the replays of its games keep the mark. `unpack` refuses a protected map.
 - The source map `Protected.scx.sourcemap.json` is written next to the output. The map does not hold it; keep it to yourself.
+- For TypeScript the scripts lose their tsc source maps too. The source map next to the output holds their TypeScript lines instead.
 
 What it does not do:
 
@@ -721,6 +742,8 @@ SC4J.bat tool scr-enhanced script trace Protected.scx.sourcemap.json --at main.j
 SC4J.bat tool scr-enhanced script trace Protected.scx.sourcemap.json --log sc4j.log
 ```
 
+`trace` prints the original location, such as `main.js:5`. For TypeScript it prints the TypeScript file and line, such as `src/main.ts:12`, or the compiled line for a line that tsc added on its own.
+
 ## 7. Limits
 
 - Language: Rhino 1.8.1 has no `class`, `async`/`await`, spread (`...`), `import`/`export` or `for (const ...)` in any form (`of`, `in` or a counting loop); use `let`. A `const` declared in a loop body keeps its first value; use `let`. The functions created in the body of a `for (let ...)` loop share one binding of its variables; copy the variable into a `let` inside the body. `check` reports these. TypeScript compiled with target ES5 has none of these limits (section 2.6).
@@ -733,3 +756,29 @@ SC4J.bat tool scr-enhanced script trace Protected.scx.sourcemap.json --log sc4j.
 - Effects take sprite, image and effect slots that spells and dust use too; `createEffect` returns `null` when they are full.
 - Saved games: a game with a script cannot be saved.
 - Start units: as in StarCraft, a Use Map Settings game gives every player whose race in the map is User Selectable a town hall and four workers, with or without triggers, and keeps only the neutral preplaced units of those players. Set fixed races in the map, or remove the units in `onStart`.
+
+## 8. Map compatibility
+
+A map is `enhanced-only` or `compatible`:
+
+- `enhanced-only`: the scripts change the game, so the map plays correctly only in SC:R Enhanced. `pack` writes it with the extension `.sce`, the same MPQ format as `.scm` and `.scx`; the scenario keeps its original or expansion version. Regular SC:R does not list `.sce` files.
+- `compatible`: the scripts only add graphics and conveniences, which regular SC:R does not run; the map plays the same there. It keeps `.scm` or `.scx`.
+
+The mark comes from `--compatibility`, else from `"compatibility"` in `manifest.json`, else it is `auto`: `pack` scans the scripts and picks one. `pack` prints the mark, its reasons and the file it wrote:
+
+```text
+Packed 1 scripts and 0 resources into Out.sce.
+The map is enhanced-only: the scripts change the game.
+  main.js:12: Player.setMinerals
+```
+
+The scan:
+
+- A gameplay member is a member of the declarations marked "Shared code only." that changes the game. A member marked "works while the game is read-only" does not: `print`, sounds, the view, timers, channels, script buttons and the unit finder searches. Neither does a member marked "Changes graphics only.", such as `replaceTileImage`.
+- A decision hook (`onBeforeDamage`, `onBeforeOrder`, `onBeforeTargetAcquired`) counts as a gameplay use.
+- The scan follows the type of a value from the globals, the hook parameters, `new Map()` and other declared objects, literals, members and method results, and from variables and properties that the scripts always assign the same type. `player.deaths.set(...)` counts, `new Map().set(...)` does not.
+- A name that only gameplay members have counts on any value, such as `unit.kill()` in a helper function. A name that your own objects also have (an object literal property or `value.name = ...`) counts only on a value of a followed type.
+- The scan cannot judge, warns, and picks `enhanced-only` for: a name that a declaration also has without changing the game (such as `set`) on a value of an unknown type, a computed member `value[key]` of an object with gameplay members, a computed member called on a value of an unknown type, `with`, and a script that does not parse.
+- If the scan is wrong, set the mark by hand. A map marked `compatible` whose scripts seem to change the game gets a warning.
+
+The output file takes the extension of the mark: an `enhanced-only` map replaces `.scm`, `.scx` or `.sce` at the end of `-o` with `.sce`, or adds `.sce` to a name without one; a `compatible` map keeps the `.scm` or `.scx` of `-o`, else takes the one of the input map, else the one its scenario version gives. Not covered: a regular SC:R client that joins a LAN game of a `.sce` map, a renamed file, and replays, which keep no mark.

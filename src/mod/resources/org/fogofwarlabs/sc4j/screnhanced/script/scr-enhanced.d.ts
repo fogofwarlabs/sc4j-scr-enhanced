@@ -16,7 +16,9 @@
 // local input hooks (onLocal...). It runs only on this player's machine, for display and input, and must not change anything shared code
 // reads. A member documented "Shared code only." throws a TypeError in local code, "Local code only." throws a TypeError in shared code, and
 // "Only in onRender." throws a TypeError outside onRender; a member without such a note works in both. A member that changes the game state
-// also throws a TypeError while the game is read-only, inside a decision hook ({@link Game.isReadOnly}).
+// also throws a TypeError while the game is read-only, inside a decision hook ({@link Game.isReadOnly}). A shared code member documented
+// "works while the game is read-only" changes no game state, and one documented "Changes graphics only." changes only what is drawn; the
+// script tool's pack takes neither as a change of the game (guide chapter 8).
 //
 // Positions and distances are map pixels unless a member names tiles (32 pixels); type and player ids are 0-based. An object that stays with a
 // unit, sprite, image or bullet throws an Error ("... does not exist") once that thing is gone; values outside their range throw a RangeError
@@ -3434,22 +3436,24 @@ interface Player {
 
     /**
      * Shows a text on the player's screen as Display Text Message does, when the player is the local player; with {forced: false} only when
-     * the subtitle option is on. Shared code only.
+     * the subtitle option is on. Shared code only; works while the game is read-only.
      */
     print(text: string, options?: { forced?: boolean }): void;
 
     /**
-     * Pings the minimap at a position as Minimap Ping does, when the player is the local player. Shared code only.
+     * Pings the minimap at a position as Minimap Ping does, when the player is the local player. Shared code only; works while the game is read-only.
      */
     pingMinimap(position: Position): void;
 
     /**
-     * Plays a sound file of the map archive by its path, as Play WAV does, when the player is the local player. Shared code only.
+     * Plays a sound file of the map archive by its path, as Play WAV does, when the player is the local player. Shared code only; works while the
+     * game is read-only.
      */
     playSound(path: string): void;
 
     /**
-     * Shows the talking portrait of a unit type as Talking Portrait does, when the player is the local player. Shared code only.
+     * Shows the talking portrait of a unit type as Talking Portrait does, when the player is the local player. Shared code only; works while the
+     * game is read-only.
      *
      * @param frames the duration in frames, at least 0
      * @throws RangeError if the duration is negative
@@ -3457,12 +3461,14 @@ interface Player {
     showTalkingPortrait(unitType: UnitType, frames: number): void;
 
     /**
-     * Mutes or unmutes unit speech as Mute and Unmute Unit Speech do, when the player is the local player. Shared code only.
+     * Mutes or unmutes unit speech as Mute and Unmute Unit Speech do, when the player is the local player. Shared code only; works while the game is
+     * read-only.
      */
     setUnitSpeechMuted(muted: boolean): void;
 
     /**
-     * Centers the screen on a position when the player is the local player; the screens of the other players stay. Shared code only.
+     * Centers the screen on a position when the player is the local player; the screens of the other players stay. Shared code only; works while the
+     * game is read-only.
      */
     centerView(position: Position): void;
 
@@ -3860,7 +3866,7 @@ interface Timer {
     getId(): number;
 
     /**
-     * Cancels the timer. Shared code only.
+     * Cancels the timer. Shared code only; works while the game is read-only.
      *
      * @returns false when the timer was already cancelled or has run its only call
      */
@@ -3908,7 +3914,7 @@ interface Game {
     isReadOnly(): boolean;
 
     /**
-     * Shows a text to all players. Shared code only.
+     * Shows a text to all players. Shared code only; works while the game is read-only.
      */
     print(text: string): void;
 
@@ -3932,7 +3938,8 @@ interface Game {
 
     /**
      * Calls a function every given number of frames, first that many frames from now ({@link Time}), at the frame start before the hooks of
-     * the frame. The timers due at one frame run in the order of their due frames, then of their adding. Shared code only.
+     * the frame. The timers due at one frame run in the order of their due frames, then of their adding. Shared code only; works while the game is
+     * read-only.
      *
      * @param frames the interval in frames, an integer of at least 1
      * @throws TypeError if the interval is not an integer or the callback not a function
@@ -3942,7 +3949,7 @@ interface Game {
 
     /**
      * Calls a function once, the given number of frames from now ({@link Time}), at the frame start before the hooks of the frame. Shared code
-     * only.
+     * only; works while the game is read-only.
      *
      * @param frames the delay in frames, an integer of at least 1
      * @throws TypeError if the delay is not an integer or the callback not a function
@@ -4622,7 +4629,7 @@ interface Units {
     count(filter?: UnitFilter): number;
 
     /**
-     * Searches the unit finder of the game for the units whose bounds meet a rectangle. Shared code only.
+     * Searches the unit finder of the game for the units whose bounds meet a rectangle. Shared code only; works while the game is read-only.
      *
      * @param corner      a corner of the rectangle, in map pixels
      * @param otherCorner the opposite corner, in map pixels
@@ -4632,7 +4639,8 @@ interface Units {
     findInRectangle(corner: Position, otherCorner: Position, filter?: UnitFilter): Unit[];
 
     /**
-     * Searches the unit finder of the game for the units whose position lies within a radius of a position. Shared code only.
+     * Searches the unit finder of the game for the units whose position lies within a radius of a position. Shared code only; works while the game
+     * is read-only.
      *
      * @param position the center, in map pixels
      * @param radius   the radius in pixels, at least 0; a negative radius throws a RangeError
@@ -4653,7 +4661,7 @@ interface Units {
     create(type: UnitType, player: Player, position: Position): Unit | null;
 
     /**
-     * Finds the position where {@link create} would place a unit, without creating it. Shared code only.
+     * Finds the position where {@link create} would place a unit, without creating it. Shared code only; works while the game is read-only.
      *
      * @param type     the unit type
      * @param player   the owner
@@ -5176,7 +5184,7 @@ interface Terrain {
      * show it too), as presentation: the HD and HD2 graphics draw the image stretched over the tile with its alpha over the installed tile, the
      * classic graphics its pixels quantized to the tileset palette where they are opaque. A later call for the same megatile replaces the
      * earlier one. Shared code only, at the module top level or in onStart; a side of the image that is not a multiple of 32 pixels throws a
-     * RangeError.
+     * RangeError. Changes graphics only.
      *
      * @param tile  the tile whose megatile is replaced
      * @param image the picture, 32, 64 or 128 pixels square for SD, HD2 and HD detail
@@ -5314,8 +5322,8 @@ interface PlayerValue<T> {
 interface Sync {
     /**
      * Creates a channel. The handler runs as shared code with the sending player, the value, and the live units the player had selected when
-     * the command ran. Shared code only. The value comes from another player's game, which may send any channel value whatever T is, so the
-     * handler receives it as unknown: check its kind before using it.
+     * the command ran. Shared code only; works while the game is read-only. The value comes from another player's game, which may send any channel
+     * value whatever T is, so the handler receives it as unknown: check its kind before using it.
      *
      * @param handler the function that receives the sent values
      * @returns the channel, whose send takes T
@@ -5324,7 +5332,7 @@ interface Sync {
     createChannel<T = unknown>(handler: (player: Player, value: unknown, units: Unit[]) => void): Channel<T>;
 
     /**
-     * Creates a value per player over a new channel. Shared code only.
+     * Creates a value per player over a new channel. Shared code only; works while the game is read-only.
      *
      * @param initial the value of every player until one is set
      * @returns the player value
@@ -6548,7 +6556,8 @@ interface CommandCard {
 
     /**
      * Creates a script button, at most 256 per game; one more throws a RangeError. The button goes after the set's buttons up to its
-     * position, with the condition Script and the action Script, or ScriptTarget for a target button. Shared code only.
+     * position, with the condition Script and the action Script, or ScriptTarget for a target button. Shared code only; works while the game is
+     * read-only.
      *
      * @param options the set, the look and the callbacks of the button
      * @returns the script button

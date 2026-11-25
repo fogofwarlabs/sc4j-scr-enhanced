@@ -22,6 +22,9 @@
 # Ignore Build Directory
 build/
 
+# Ignore the folder view files of macOS
+.DS_Store
+
 # Ignore crash logs and caches of runs started from the repository
 hs_err_pid*.log
 replay_pid*.log

@@ -154,6 +154,20 @@ final class CloneOverlayTest {
     }
 
     @Test
+    void check_should_not_count_hidden_files_of_the_overlay(@TempDir @NotNull Path directory) throws IOException {
+        CloneOverlay overlay = createOverlay(directory);
+        Path mod = directory.resolve("scr");
+
+        overlay.accept(mod);
+        write(directory.resolve("overlay"), ".DS_Store", "-");
+        write(directory.resolve("overlay"), "module/src/main/resources/._settings.txt", "-");
+
+        overlay.check(mod, TASK_PATH);
+
+        Assertions.assertEquals(List.of(ADDED, REPLACED), CloneOverlay.listPaths(directory.resolve("overlay")));
+    }
+
+    @Test
     void describe_changes_should_show_the_base_then_the_base_now_and_the_overlay(@TempDir @NotNull Path directory) throws IOException {
         CloneOverlay overlay = createOverlay(directory);
         Path mod = directory.resolve("scr");

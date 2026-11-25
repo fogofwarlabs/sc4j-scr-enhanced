@@ -14,6 +14,7 @@ import org.fogofwarlabs.sc4j.screnhanced.graphics.ImageReplacements;
 import org.fogofwarlabs.sc4j.screnhanced.graphics.TerrainReplacements;
 import org.fogofwarlabs.sc4j.screnhanced.script.ScriptPackage;
 import org.fogofwarlabs.sc4j.screnhanced.script.ScriptResources;
+import org.fogofwarlabs.sc4j.screnhanced.script.ScriptSourceMap;
 import org.fogofwarlabs.sc4j.screnhanced.script.core.ScriptGame;
 import org.fogofwarlabs.sc4j.screnhanced.script.core.ScriptUnitStats;
 import org.fogofwarlabs.sc4j.screnhanced.script.input.ScriptLocalInput;
@@ -23,6 +24,7 @@ import org.jetbrains.annotations.Nullable;
 import org.mozilla.javascript.*;
 import org.mozilla.javascript.debug.Debugger;
 
+import java.io.IOException;
 import java.io.Serial;
 import java.util.Collections;
 import java.util.Map;
@@ -59,7 +61,8 @@ import java.util.function.Consumer;
  * the hook call (or the module loading) it happened in; a decision hook that fails leaves the decision as the previous hooks left it. A
  * local call that exceeds its budget or overflows the stack ends at once without stopping the script, and a render call that does draws
  * nothing, while a hook that throws in a local call ends only itself. Every such event is written to the log output once, with the module
- * name.
+ * name. The location of a script error is the original one when the script holds a source map, such as the TypeScript source line
+ * ({@link ScriptSourceMap#readCompiled}); a source map that does not read is warned about once and not used.
  * <p>
  * Every method runs on the caller's thread; the runtime starts no thread. It is not thread-safe.
  */
@@ -161,12 +164,21 @@ public final class ScriptRuntime {
 
         ScriptContextFactory contextFactory = new ScriptContextFactory(instructionBudget);
         ScriptRandom random = new ScriptRandom(seed);
+        String mainName = scriptPackage.getManifest().getMain();
+        ScriptSourceMap sourceMap;
+
+        try {
+            sourceMap = ScriptSourceMap.readCompiled(scriptPackage.getScripts());
+        } catch (IOException exception) {
+            logOutput.write(LogLevel.WARNING, mainName, Exceptions.format("The source maps of the scripts are not used: {0}", exception.getMessage()));
+            sourceMap = new ScriptSourceMap();
+        }
 
         try (Context context = contextFactory.enterSetupContext()) {
             TopLevel global = ScriptGlobalUtils.createGlobal(context, random);
             ScriptGame scriptGame = ScriptGame.install(context, global, game, resources);
 
-            return new ScriptRuntime(context, scriptPackage.getManifest().getMain(), logOutput, contextFactory, random, global,
+            return new ScriptRuntime(context, mainName, logOutput, sourceMap, contextFactory, random, global,
                                      new ScriptModuleLoader(scriptPackage.getScripts(), global, logOutput), scriptGame);
         }
     }
@@ -177,27 +189,44 @@ public final class ScriptRuntime {
 
     /**
      * Formats the location of a script error for the log: the file and line of the innermost frame of a script module on the error's stack,
-     * where the module threw the error or called the prelude function that threw it; the prelude's own frames are left out.
+     * where the module threw the error or called the prelude function that threw it; the prelude's own frames are left out. The location is
+     * the original one of the source map when it has one.
      *
      * @param exception the script error
+     * @param sourceMap the source map of the scripts
      * @return {@code " (file:line)"}, or an empty string if no frame of a module is on the stack
      */
-    private static @NotNull String formatScriptLocation(@NotNull RhinoException exception) {
+    private static @NotNull String formatScriptLocation(@NotNull RhinoException exception, @NotNull ScriptSourceMap sourceMap) {
+        String fileName = null;
+        int line = 0;
+
         for (ScriptStackElement element : exception.getScriptStack()) {
             if (element.fileName != null && !ScriptPrelude.isPreludeSource(element.fileName)) {
-                return Exceptions.format(" ({0}:{1})", element.fileName, element.lineNumber);
+                fileName = element.fileName;
+                line     = element.lineNumber;
+
+                break;
             }
         }
 
-        String sourceName = exception.sourceName();
+        if (fileName == null && exception.sourceName() != null && !ScriptPrelude.isPreludeSource(exception.sourceName())) {
+            fileName = exception.sourceName();
+            line     = exception.lineNumber();
+        }
 
-        return sourceName != null && !ScriptPrelude.isPreludeSource(sourceName) ? Exceptions.format(" ({0}:{1})", sourceName, exception.lineNumber())
-                                                                                : "";
+        if (fileName == null) {
+            return "";
+        }
+
+        String originalLocation = sourceMap.findOriginalLocation(fileName, line);
+
+        return originalLocation == null ? Exceptions.format(" ({0}:{1})", fileName, line) : Exceptions.format(" ({0})", originalLocation);
     }
 
 
     private final @NotNull String mainName;
     private final @NotNull ScriptLogOutput logOutput;
+    private final @NotNull ScriptSourceMap sourceMap;
 
     private final @NotNull ScriptContextFactory contextFactory;
     private final @NotNull ScriptRandom random;
@@ -223,6 +252,7 @@ public final class ScriptRuntime {
      * @param context        the current setup context
      * @param mainName       the name of the script that runs first
      * @param logOutput      the output of the runtime's warnings and errors
+     * @param sourceMap      the source map of the scripts, which gives the original locations of errors
      * @param contextFactory the factory of the runtime's contexts
      * @param random         the script RNG of the global scope
      * @param global         the global scope
@@ -230,11 +260,13 @@ public final class ScriptRuntime {
      * @param scriptGame     the game API
      * @throws IllegalStateException if the prelude cannot be read or fails
      */
-    private ScriptRuntime(@NotNull Context context, @NotNull String mainName, @NotNull ScriptLogOutput logOutput,
+    private ScriptRuntime(@NotNull Context context, @NotNull String mainName,
+                          @NotNull ScriptLogOutput logOutput, @NotNull ScriptSourceMap sourceMap,
                           @NotNull ScriptContextFactory contextFactory, @NotNull ScriptRandom random, @NotNull TopLevel global,
                           @NotNull ScriptModuleLoader moduleLoader, @NotNull ScriptGame scriptGame) {
         this.mainName  = mainName;
         this.logOutput = logOutput;
+        this.sourceMap = sourceMap;
 
         this.contextFactory = contextFactory;
         this.random         = random;
@@ -871,7 +903,7 @@ public final class ScriptRuntime {
             this.stop(moduleName, Exceptions.format("{0} overflowed the stack; the script stopped.", callName));
         } catch (RhinoException exception) {
             this.logOutput.writeScriptError(moduleName, Exceptions.format("{0} failed: {1}{2}", callName, exception.details(),
-                                                                          formatScriptLocation(exception)), exception);
+                                                                          formatScriptLocation(exception, this.sourceMap)), exception);
 
             return CallResult.FAILED;
         } catch (RuntimeException exception) {

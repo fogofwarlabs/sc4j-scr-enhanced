@@ -13,7 +13,8 @@ import java.util.stream.Stream;
  * Represents a script package: the manifest, the scripts and the resources of a map.
  * <p>
  * In a script folder the manifest is {@value ScriptManifest#FILE_NAME}, the scripts are the {@value #SCRIPT_EXTENSION} files outside
- * {@value #RESOURCE_FOLDER} and the resources are every file under {@value #RESOURCE_FOLDER}; other files are not part of the package.
+ * {@value #RESOURCE_FOLDER} and the resources are every file under {@value #RESOURCE_FOLDER}; other files, such as TypeScript sources and
+ * source map files, are not part of the package, nor are hidden files: those with a path segment that starts with {@code .}.
  * Script names are relative to the folder and resource names relative to {@value #RESOURCE_FOLDER}, both with {@code /} separators.
  * A name has nonempty segments other than {@code .} and {@code ..} and no backslash, colon or control character; names are unique
  * ignoring letter case, and no name is the folder of another, so that every name is one file of a folder on every platform.
@@ -31,6 +32,7 @@ public final class ScriptPackage {
     private static final char NAME_SEPARATOR = '/';
     private static final @NotNull String CURRENT_FOLDER_SEGMENT = ".";
     private static final @NotNull String PARENT_FOLDER_SEGMENT = "..";
+    private static final @NotNull String HIDDEN_NAME_PREFIX = ".";
     private static final @NotNull String FORBIDDEN_NAME_CHARACTERS = "\\:";
     private static final char FIRST_PRINTABLE_CHARACTER = 0x20;
 
@@ -58,7 +60,9 @@ public final class ScriptPackage {
     }
 
     /**
-     * Reads a script package from a script folder; scripts and resources are ordered by name.
+     * Reads a script package from a script folder; scripts and resources are ordered by name. A script that names a source map file, as tsc
+     * writes it, holds the map as a {@code data:} URL in the package ({@link ScriptCompiledMapUtils#inlineMap}), which fails if the file is
+     * not a source map.
      *
      * @param folder the script folder
      * @return the read script package
@@ -77,11 +81,16 @@ public final class ScriptPackage {
 
         readFolderFiles(folder, scripts, resources);
 
+        for (Map.Entry<String, byte[]> script : scripts.entrySet()) {
+            script.setValue(ScriptCompiledMapUtils.inlineMap(folder, script.getKey(), script.getValue()));
+        }
+
         return create(manifest, scripts, resources);
     }
 
     /**
-     * Reads the scripts and the resources of a script folder, without the manifest and without checking the names.
+     * Reads the scripts and the resources of a script folder, without the manifest, without the hidden files ({@link #isHidden}) and without
+     * checking the names.
      *
      * @param folder    the script folder
      * @param scripts   receives the script contents by name
@@ -93,7 +102,13 @@ public final class ScriptPackage {
 
         try (Stream<Path> files = Files.walk(folder)) {
             for (Path file : files.filter(Files::isRegularFile).toList()) {
-                String name = toName(folder.relativize(file));
+                Path relativePath = folder.relativize(file);
+
+                if (isHidden(relativePath)) {
+                    continue;
+                }
+
+                String name = toName(relativePath);
 
                 if (name.startsWith(resourcePrefix)) {
                     resources.put(name.substring(resourcePrefix.length()), Files.readAllBytes(file));
@@ -116,6 +131,22 @@ public final class ScriptPackage {
         }
 
         return name.toString();
+    }
+
+    /**
+     * Checks whether a file or folder of a script folder is hidden, which leaves it out of the package.
+     *
+     * @param relativePath the path of the file or folder relative to the script folder
+     * @return {@code true} if a segment of the path starts with {@code .}, {@code false} otherwise
+     */
+    static boolean isHidden(@NotNull Path relativePath) {
+        for (Path segment : relativePath) {
+            if (segment.toString().startsWith(HIDDEN_NAME_PREFIX)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -235,13 +266,13 @@ public final class ScriptPackage {
      * Writes the package as a script folder: {@value ScriptManifest#FILE_NAME}, the scripts and the resources under
      * {@value #RESOURCE_FOLDER}.
      *
-     * @param folder the script folder, absent or empty
+     * @param folder the script folder, absent or holding only hidden entries, whose names start with {@code .}
      * @throws IOException if the folder holds files or a file cannot be written
      */
     public void writeFolder(@NotNull Path folder) throws IOException {
         if (Files.isDirectory(folder)) {
             try (Stream<Path> entries = Files.list(folder)) {
-                if (entries.findAny().isPresent()) {
+                if (entries.anyMatch(entry -> !isHidden(folder.relativize(entry)))) {
                     throw Exceptions.newIOException("The script folder is not empty: {0}", folder);
                 }
             }

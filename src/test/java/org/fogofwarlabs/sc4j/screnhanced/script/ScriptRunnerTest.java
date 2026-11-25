@@ -225,6 +225,9 @@ final class ScriptRunnerTest {
         Files.writeString(scriptFolder.resolve("jsconfig.json"), "{\"changed\": true}");
         Assertions.assertFalse(runner.repackIfChanged());
 
+        Files.writeString(scriptFolder.resolve("._main.js"), "-");
+        Assertions.assertFalse(runner.repackIfChanged());
+
         Files.writeString(main, "function onStart() {\n    game.print('second');\n}\n");
         Files.setLastModifiedTime(main, FileTime.fromMillis(MODIFIED_TIME + 1));
         Assertions.assertTrue(runner.repackIfChanged());
@@ -277,5 +280,25 @@ final class ScriptRunnerTest {
                                                   new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
                                                   new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
                                                   new RecordingStarter(1)));
+    }
+
+    @Test
+    void run_command_should_take_an_enhanced_only_map(@TempDir @NotNull Path folder) throws IOException {
+        Path install = writeInstall(folder);
+        Path map = Files.move(writeMap(folder), folder.resolve("Arena.sce"));
+        Path scriptFolder = folder.resolve("script");
+        RecordingStarter starter = new RecordingStarter(0);
+        PrintStream discarded = new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8);
+
+        ScriptMapScenario.writeFolder(scriptFolder, SCRIPT_FOLDER);
+
+        Assertions.assertEquals(0, ScriptTool.run(new String[]{ScriptTool.RUN_COMMAND, map.toString(), ScriptTool.SCRIPT_OPTION,
+                                                               scriptFolder.toString(), ScriptTool.INSTALL_OPTION, install.toString()},
+                                                  discarded, discarded, starter));
+
+        Path packedMap = install.toAbsolutePath().resolve("userdata/mods/scr-enhanced/script-run/Arena.sce");
+
+        Assertions.assertNotNull(readPackedPackage(packedMap));
+        Assertions.assertEquals(packedMap.toString(), starter.builders.getFirst().command().getLast());
     }
 }

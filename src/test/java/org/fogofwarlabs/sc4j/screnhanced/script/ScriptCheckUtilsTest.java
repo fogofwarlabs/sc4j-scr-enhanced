@@ -311,6 +311,19 @@ final class ScriptCheckUtilsTest {
     }
 
     @Test
+    void check_should_report_a_source_map_that_does_not_read(@TempDir @NotNull Path folder) throws IOException {
+        List<String> findings = check(folder, withManifest("main.js", "function onStart() {\n}\n//# sourceMappingURL=main.js.map",
+                                                           "main.js.map", "{\"version\": 3}",
+                                                           "lib/util.js", "var a;\n//# sourceMappingURL=util.js.map\n"));
+
+        Assertions.assertEquals(List.of("lib/util.js: error: The script lib/util.js names the source map util.js.map, which is not a file.",
+                                        "main.js: error: The source map of the script main.js is no source map of version 3 with sources and " +
+                                        "mappings."),
+                                findings);
+        Assertions.assertEquals(1, runCheckCommand(folder));
+    }
+
+    @Test
     void check_should_fail_for_a_path_that_is_no_folder(@TempDir @NotNull Path folder) throws IOException {
         Path file = Files.writeString(folder.resolve("main.js"), "");
 

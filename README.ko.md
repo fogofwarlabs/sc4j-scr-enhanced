@@ -98,7 +98,7 @@ function onUnitDied(event) {
 
 ## 빌드와 실행
 
-JDK 25가 필요합니다. 명령은 저장소 루트에서 실행합니다(Linux에서는 `./gradlew`).
+JDK 25가 필요합니다. 명령은 저장소 루트에서 실행합니다. Linux와 macOS에서는 `.\gradlew.bat` 대신 `./gradlew`를 쓰고 경로의 `\`를 `/`로 씁니다(`../sc4j/gradlew -p ../sc4j devInstall`).
 
 ```powershell
 git clone --recurse-submodules https://github.com/fogofwarlabs/sc4j-scr-enhanced.git

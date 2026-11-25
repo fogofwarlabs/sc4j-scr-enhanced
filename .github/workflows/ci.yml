@@ -17,10 +17,14 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
-    name: test
-    # The client module ships FFmpeg natives for windows-x86_64 only.
-    runs-on: windows-latest
+  tests:
+    name: test (${{ matrix.os }})
+    # The unit tier needs no SC:R data and no display; it runs on every supported platform.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     defaults:
       run:
@@ -28,6 +32,7 @@ jobs:
     steps:
       # Keeps the line endings of the repository on the Windows runner.
       - name: Keep line endings
+        if: runner.os == 'Windows'
         run: git config --global core.autocrlf false
 
       - name: Check out
@@ -53,9 +58,25 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: reports
+          name: reports-${{ matrix.os }}
           path: |
             **/build/reports/
             **/build/test-results/
           if-no-files-found: ignore
           retention-days: 14
+
+  # The required status check: it passes only when the tests passed on every platform.
+  test:
+    name: test
+    needs: tests
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the platform results
+        env:
+          RESULT: ${{ needs.tests.result }}
+        run: |
+          if [ "$RESULT" != "success" ]; then
+            echo "::error::The tests did not pass on every platform: $RESULT."
+            exit 1
+          fi

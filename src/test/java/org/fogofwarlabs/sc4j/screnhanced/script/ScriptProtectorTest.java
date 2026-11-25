@@ -86,6 +86,12 @@ final class ScriptProtectorTest {
     }
 
     @Test
+    void protect_removes_a_line_comment_at_the_end_of_the_text() throws IOException {
+        Assertions.assertEquals("var result=1;", protectSameResult("var result = 1;\n//# sourceMappingURL=main.js.map"));
+        Assertions.assertEquals("var result=2;", protectSameResult("var result = 2; // two"));
+    }
+
+    @Test
     void protect_keeps_shadowed_names_and_closures_apart() throws IOException {
         protectSameResult("""
                           function makeCounter(start) {

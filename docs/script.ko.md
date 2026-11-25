@@ -11,6 +11,7 @@ SC:R Enhanced의 맵 스크립트를 쓰는 방법입니다. 전체 API 레퍼�
 - [5. 예제](#5-예제)
 - [6. 맵 보호](#6-맵-보호)
 - [7. 제한](#7-제한)
+- [8. 맵 호환성](#8-맵-호환성)
 
 ## 1. 개요
 
@@ -24,21 +25,27 @@ SC:R Enhanced의 맵 스크립트를 쓰는 방법입니다. 전체 API 레퍼�
 
 ### 2.1 스크립트 도구
 
-스크립트 도구는 모드 `scr-enhanced`의 도구 `script`입니다. SC4J 설치본의 `SC4J.bat`(Linux `SC4J`, Windows 콘솔 `SC4J-cli.exe`)으로 실행합니다.
+스크립트 도구는 모드 `scr-enhanced`의 도구 `script`입니다. SC4J 설치본의 시작 파일로 실행합니다. Windows에서는 `SC4J.bat`이나 콘솔 프로그램 `SC4J-cli.exe`, Linux와 macOS에서는 `SC4J`입니다.
 
 ```powershell
 SC4J.bat tool scr-enhanced script <command> [arguments]
 ```
 
-상대 경로는 현재 폴더 기준입니다.
+```sh
+./SC4J tool scr-enhanced script <command> [arguments]
+```
+
+아래 예제는 `SC4J.bat`과 `.\gradlew.bat`을 씁니다. Linux와 macOS에서는 `./SC4J`(또는 설치본의 `SC4J` 경로)와 `./gradlew`로 바꿔 씁니다. 상대 경로는 현재 폴더 기준입니다.
 
 | 명령 | 하는 일 |
 |---|---|
 | `init <folder>` | 새 스크립트 폴더를 만듦. 폴더는 없거나 비어 있어야 함 |
+| `init <folder> --ts` | 새 TypeScript 프로젝트를 만듦(2.6절). 폴더는 없거나 비어 있어야 함 |
 | `check <folder>` | 스크립트 폴더의 오류와 경고를 출력 |
 | `run <map> --script <folder> [--melee] [--watch] [--inspect[=<port>]] [--install <folder>]` | 폴더를 맵 복사본에 넣고 그 맵으로 SC:R Enhanced를 시작 |
 | `pack <map> --script <folder> -o <output>` | 스크립트 패키지를 넣은 맵을 `<output>`에 씀. 이전 패키지는 교체 |
 | `pack <map> --script <folder> -o <output> --protect` | 같은 일을 보호된 맵으로(6장) |
+| `pack <map> --script <folder> -o <output> --compatibility <mark>` | 같은 일을 호환성 표시 `enhanced-only`, `compatible`, `auto` 중 하나로(8장) |
 | `unpack <map> -o <folder>` | 맵의 스크립트 패키지를 없거나 빈 폴더에 씀 |
 | `trace <source map> --at <script>:<line>` | 보호된 스크립트의 줄에 해당하는 원래 줄을 출력 |
 | `trace <source map> --log <file>` | 로그 같은 파일을 원래 줄로 바꿔 출력 |
@@ -51,6 +58,10 @@ SC4J.bat tool scr-enhanced script <command> [arguments]
 .\gradlew.bat runScriptTool --args="init my-map"
 ```
 
+```sh
+./gradlew runScriptTool --args="init my-map"
+```
+
 ### 2.2 스크립트 폴더
 
 ```powershell
@@ -59,14 +70,14 @@ SC4J.bat tool scr-enhanced script init my-map
 
 | 파일 | 내용 |
 |---|---|
-| `manifest.json` | `{"name": "my-map", "main": "main.js", "api": "1"}`: 패키지 이름(폴더 이름), 먼저 실행할 스크립트, 스크립트 API 버전 |
+| `manifest.json` | `{"name": "my-map", "main": "main.js", "api": "1"}`: 패키지 이름(폴더 이름), 먼저 실행할 스크립트, 스크립트 API 버전. 선택으로 `"compatibility"`(8장) |
 | `main.js` | 메인 스크립트. `onStart`와 `onFrame` 예제 |
 | `jsconfig.json` | 편집기 설정. 선언 파일만 쓰고, 스크립트를 검사하고, 파일마다 별도 모듈 |
 | `scr-enhanced.d.ts` | 상위 API, 런타임, 표준 객체의 선언 |
 | `core.d.ts` | 하위 API `core`의 선언 |
 | `resources/` | 스크립트가 읽는 파일: GRP, anim, PNG, DDS, WAV와 Ogg 소리, 그리고 텍스트나 JSON으로 읽는 모든 파일 |
 
-맵에는 `manifest.json`, `resources/` 밖의 `.js` 파일, `resources/` 아래 파일만 들어갑니다.
+맵에는 `manifest.json`, `resources/` 밖의 `.js` 파일, `resources/` 아래 파일만 들어갑니다. 이름이 `.`으로 시작하는 숨김 파일과 폴더(`.DS_Store`, `.git` 등)는 맵에 들어가지 않고, `init`과 `unpack`이 빈 폴더를 요구할 때도 세지 않습니다. tsc가 쓴 것처럼 소스 맵 파일을 가리키는 `.js` 파일은 그 소스 맵을 함께 가져갑니다(2.6절).
 
 ### 2.3 편집기 자동 완성
 
@@ -105,25 +116,28 @@ function onStart() {
 
 ### 2.5 로그
 
-`log.info`, `log.warn`, `log.error`는 모듈 이름을 앞에 붙여 SC:R Enhanced 로그 `<install>/userdata/logs/scr-enhanced/sc4j.log`에 씁니다. 스크립트 오류도 오류를 던진 스크립트 파일과 줄(`main.js:12`)과 함께 여기에 남습니다. API 호출이 던진 오류는 그 호출의 줄이 남습니다.
+`log.info`, `log.warn`, `log.error`는 모듈 이름을 앞에 붙여 SC:R Enhanced 로그 `<install>/userdata/logs/scr-enhanced/sc4j.log`에 씁니다. 스크립트 오류도 오류를 던진 스크립트 파일과 줄(`main.js:12`)과 함께 여기에 남습니다. API 호출이 던진 오류는 그 호출의 줄이 남습니다. TypeScript는 TypeScript 파일과 줄(`src/main.ts:12`)이 남습니다(2.6절).
 
 ### 2.6 TypeScript
 
 스크립트를 TypeScript로 쓰고 `tsc`로 컴파일할 수 있습니다(TypeScript 5.9로 확인). 맵에는 컴파일한 JavaScript만 들어갑니다.
 
+```powershell
+SC4J.bat tool scr-enhanced script init my-map --ts
+```
+
 ```text
 my-map/                 TypeScript 프로젝트
-  tsconfig.json
-  src/main.ts           소스
-  src/bonus.ts
-  script/               팩할 스크립트 폴더: init으로 만들고 tsc가 채움
+  tsconfig.json         tsc 설정
+  scr-enhanced.d.ts     상위 API, 런타임, 표준 객체의 선언
+  core.d.ts             하위 API core의 선언
+  src/main.ts           메인 소스. defineHooks 예제
+  script/               팩할 스크립트 폴더. tsc가 채움
     manifest.json       {"name": "my-map", "main": "main.js", "api": "1"}
-    scr-enhanced.d.ts
-    core.d.ts
     resources/
 ```
 
-`init my-map/script`로 `script/`를 만들고, `manifest.json`의 이름을 정하고, 그 안의 `main.js`와 `jsconfig.json`을 지운 뒤 `my-map/tsconfig.json`을 추가하세요.
+`tsconfig.json`:
 
 ```json
 {
@@ -135,16 +149,17 @@ my-map/                 TypeScript 프로젝트
         "types": [],
         "strict": true,
         "noImplicitReturns": true,
+        "sourceMap": true,
         "rootDir": "src",
         "outDir": "script"
     },
-    "files": ["script/scr-enhanced.d.ts", "script/core.d.ts"],
+    "files": ["scr-enhanced.d.ts", "core.d.ts"],
     "include": ["src/**/*.ts"]
 }
 ```
 
-- tsc는 `outDir`의 파일을 `include`에서 빼므로 선언 파일은 `files`에 적습니다.
-- tsc는 `main.js`와 다른 모듈을 `manifest.json` 옆에 쓰고 다른 파일은 복사하지 않습니다. `manifest.json`과 `resources/`는 `script/`에 그대로 둡니다.
+- tsc는 `main.js`와 그 소스 맵 `main.js.map`을 `manifest.json` 옆에 쓰고, 다른 소스도 똑같이 씁니다. 다른 파일은 복사하지 않으므로 `manifest.json`과 `resources/`는 `script/`에 그대로 둡니다.
+- `pack`과 `run`은 `script/`만 읽습니다. `.ts` 소스와 선언 파일은 그 밖에 있으므로 맵에 들어가지 않습니다. `.js.map` 파일 자체는 팩하지 않고, 그 `.js` 파일이 맵 안으로 가져갑니다.
 - 훅은 `defineHooks`(3.1절)로 정의하세요. tsc가 매개변수 타입을 정하고 잘못 쓴 훅 이름을 알려 줍니다. tsc는 런타임이 최상위 함수 훅을 부른다는 것을 모르므로, `noUnusedLocals`가 그 훅을 보고하고 훅 이름을 잘못 써도 알 수 없습니다.
 - 모듈은 상대 경로(`./bonus`)로 가져오세요.
 
@@ -193,7 +208,12 @@ target ES5에서 되는 것(tsc가 각 파일에 도우미 함수를 넣습니�
 - ES2015 이후 target은 Rhino에 없는 형태를 그대로 둡니다: ES2015부터 `class`, 전개 구문, 구조 분해의 나머지 요소, `for (const ...)`, ES2017부터 `async` 함수, ES2018부터 객체 전개. 반복문 안의 `let`과 `const`는 Rhino의 반복문 규칙(7장)을 따릅니다. `check`가 이것들을 알려 줍니다.
 - `noEmitHelpers`는 도우미 함수를 빼므로 스크립트가 `ReferenceError`로 실패합니다. `importHelpers`는 도우미 함수를 `tslib` 모듈에서 불러오므로 npm 패키지 `tslib`의 `tslib.js`를 스크립트 폴더에 복사하세요.
 - `commonjs`가 아닌 `module`, `import()`, 브라우저와 Node.js 라이브러리.
-- 오류와 로그는 TypeScript 소스가 아니라 컴파일한 JavaScript의 줄(`main.js:72`)을 알려 줍니다.
+
+로그의 오류는 `onFrame failed: Error: x (src/main.ts:12)`처럼 프로젝트 기준의 TypeScript 파일과 줄을 알려 줍니다. `"sourceMap": true`나 `"inlineSourceMap": true`가 필요하고, 소스 맵이 없으면 컴파일한 줄(`main.js:72`)을 알려 줍니다. 도우미 함수처럼 tsc가 스스로 넣은 줄에는 TypeScript 줄이 없으므로 그 오류도 컴파일한 줄을 알려 줍니다. `.js` 파일이 가리키는 소스 맵 파일이 없거나 깨졌으면 `check`가 알려 주고 `pack`은 거부합니다.
+
+`pack`은 소스 맵마다 줄만 남깁니다. 줄마다 항목 하나만 두고 이름, 열, 소스 내용은 빼므로 맵과 리플레이가 작게 유지됩니다. `run`은 DevTools를 위해 소스 맵 전체를 둡니다. 보호된 맵에는 소스 맵이 없습니다. 그 오류는 보호된 줄을 알려 주고, `trace`가 그 줄의 TypeScript 줄을 알려 줍니다(6장).
+
+`mapRoot`는 지원하지 않습니다. `.js.map` 파일은 그 `.js` 파일 옆에 두세요.
 
 ### 2.7 DevTools
 
@@ -233,7 +253,7 @@ SC4J.bat tool scr-enhanced script run Map.scx --script my-map --inspect
 
 디버거:
 
-- Sources 패널은 맵의 스크립트를 파일 이름으로 읽기 전용으로 보여 줍니다. TypeScript는 컴파일된 `.js` 파일로 보입니다.
+- Sources 패널은 맵의 스크립트를 파일 이름으로 읽기 전용으로 보여 줍니다. TypeScript는 컴파일된 `.js` 파일로 보이고, DevTools는 각 파일의 소스 맵을 받습니다(2.6절). `tsconfig.json`에 `"inlineSources": true`를 주면 `run`의 소스 맵에 TypeScript 소스도 들어갑니다. `pack`은 그 소스를 빼고 맵에 넣습니다.
 - 줄 중단점(조건도 가능), `debugger` 문, 예외에서 일시 정지. 예외에서 일시 정지는 스크립트가 잡는 오류에서도 멈춥니다.
 - 멈춘 동안: 호출 스택, 각 프레임과 바깥 함수의 변수, 모듈과 전역. Step over, into, out, Resume. 콘솔 코드는 고른 프레임에서 실행됩니다.
 - 멈추면 게임 스레드가 멈춥니다. Resume까지 게임과 창이 멈추고, 멀티 플레이 게임에서는 모든 플레이어가 기다리거나 끊깁니다.
@@ -708,6 +728,7 @@ SC4J.bat tool scr-enhanced script pack Map.scx --script my-map -o Protected.scx 
 - 보호된 스크립트의 각 줄은 원본의 한 줄에서 나오므로 오류 줄을 되짚을 수 있습니다.
 - 맵에 보호 표시를 하고, 그 맵으로 한 게임의 리플레이도 표시를 유지합니다. `unpack`은 보호된 맵을 거부합니다.
 - 소스 맵 `Protected.scx.sourcemap.json`을 출력 파일 옆에 씁니다. 맵에는 들어가지 않습니다. 직접 보관하세요.
+- TypeScript는 스크립트의 tsc 소스 맵도 없앱니다. 대신 출력 파일 옆의 소스 맵이 TypeScript 줄을 담습니다.
 
 하지 않는 일:
 
@@ -721,6 +742,8 @@ SC4J.bat tool scr-enhanced script trace Protected.scx.sourcemap.json --at main.j
 SC4J.bat tool scr-enhanced script trace Protected.scx.sourcemap.json --log sc4j.log
 ```
 
+`trace`는 `main.js:5`처럼 원래 위치를 출력합니다. TypeScript는 `src/main.ts:12`처럼 TypeScript 파일과 줄을, tsc가 스스로 넣은 줄은 컴파일한 줄을 출력합니다.
+
 ## 7. 제한
 
 - 언어: Rhino 1.8.1에는 `class`, `async`/`await`, 전개 구문(`...`), `import`/`export`, 그리고 어떤 형태(`of`, `in`, 카운트 반복문)의 `for (const ...)`도 없습니다. `let`을 쓰세요. 반복문 본문에서 선언한 `const`는 첫 값을 유지하므로 `let`을 쓰세요. `for (let ...)` 반복문 본문에서 만든 함수들은 그 변수의 바인딩 하나를 공유하므로, 본문 안의 `let`에 변수를 복사하세요. `check`가 이것들을 알려 줍니다. target ES5로 컴파일한 TypeScript에는 이 제한이 없습니다(2.6절).
@@ -733,3 +756,29 @@ SC4J.bat tool scr-enhanced script trace Protected.scx.sourcemap.json --log sc4j.
 - 효과는 마법과 먼지도 쓰는 스프라이트, 이미지, 효과 슬롯을 차지합니다. 가득 차면 `createEffect`는 `null`을 돌려줍니다.
 - 저장 게임: 스크립트가 있는 게임은 저장할 수 없습니다.
 - 시작 유닛: 스타크래프트와 같이, 맵 설정 사용(Use Map Settings) 게임은 트리거가 있든 없든 맵에서 종족이 User Selectable인 플레이어에게 본진 건물과 일꾼 넷을 주고, 그 플레이어의 미리 놓인 유닛은 중립 유닛만 남깁니다. 맵에서 종족을 정해 두거나 `onStart`에서 유닛을 지우세요.
+
+## 8. 맵 호환성
+
+맵은 `enhanced-only` 또는 `compatible`입니다.
+
+- `enhanced-only`: 스크립트가 게임을 바꾸므로 SC:R Enhanced에서만 맵이 제대로 플레이됩니다. `pack`은 이 맵을 확장자 `.sce`로 씁니다. `.scm`, `.scx`와 같은 MPQ 형식이고, 시나리오는 오리지널 또는 확장팩 버전을 그대로 유지합니다. 일반 SC:R은 `.sce` 파일을 목록에 보여 주지 않습니다.
+- `compatible`: 스크립트가 일반 SC:R이 실행하지 않는 그래픽과 편의 기능만 더하므로 맵이 그곳에서도 똑같이 플레이됩니다. `.scm` 또는 `.scx`를 유지합니다.
+
+표시는 `--compatibility`, 없으면 `manifest.json`의 `"compatibility"`에서 오고, 둘 다 없으면 `auto`입니다. `auto`이면 `pack`이 스크립트를 검사해 하나를 고릅니다. `pack`은 표시와 그 이유, 쓴 파일을 출력합니다.
+
+```text
+Packed 1 scripts and 0 resources into Out.sce.
+The map is enhanced-only: the scripts change the game.
+  main.js:12: Player.setMinerals
+```
+
+검사 규칙:
+
+- 게임플레이 멤버는 선언에서 "Shared code only."로 표시되어 있고 게임을 바꾸는 멤버입니다. "works while the game is read-only"로 표시된 멤버는 게임을 바꾸지 않습니다. `print`, 소리, 화면 위치, 타이머, 채널, 스크립트 버튼, 유닛 찾기 검색이 그렇습니다. "Changes graphics only."로 표시된 멤버(`replaceTileImage` 등)도 게임을 바꾸지 않습니다.
+- 결정 훅(`onBeforeDamage`, `onBeforeOrder`, `onBeforeTargetAcquired`)도 게임플레이 사용입니다.
+- 검사는 전역, 훅 매개변수, `new Map()` 같은 선언된 객체, 리터럴, 멤버와 메서드 결과, 그리고 스크립트가 항상 같은 타입을 대입하는 변수와 속성으로 값의 타입을 따라갑니다. `player.deaths.set(...)`은 사용이고 `new Map().set(...)`은 아닙니다.
+- 게임플레이 멤버만 가진 이름은 어떤 값에서든 사용으로 셉니다. 도우미 함수 안의 `unit.kill()`이 그렇습니다. 직접 만든 객체도 가진 이름(객체 리터럴 속성이나 `value.name = ...`)은 타입을 따라간 값에서만 셉니다.
+- 다음은 판단할 수 없으므로 경고하고 `enhanced-only`를 고릅니다. 게임을 바꾸지 않는 선언에도 있는 이름(`set` 등)을 타입을 모르는 값에서 쓸 때, 게임플레이 멤버가 있는 객체의 계산된 멤버 `value[key]`, 타입을 모르는 값의 계산된 멤버 호출, `with`, 파싱되지 않는 스크립트.
+- 검사가 틀리면 표시를 직접 정하세요. 스크립트가 게임을 바꾸는 것으로 보이는데 `compatible`로 표시한 맵에는 경고가 나옵니다.
+
+출력 파일은 표시의 확장자를 받습니다. `enhanced-only` 맵은 `-o` 끝의 `.scm`, `.scx`, `.sce`를 `.sce`로 바꾸고, 확장자가 없는 이름에는 `.sce`를 붙입니다. `compatible` 맵은 `-o`의 `.scm` 또는 `.scx`를 유지하고, 없으면 입력 맵의 것을, 그것도 없으면 시나리오 버전에 맞는 것을 씁니다. 다루지 않는 경우: `.sce` 맵의 LAN 게임에 참가하는 일반 SC:R 클라이언트, 이름을 바꾼 파일, 표시를 남기지 않는 리플레이.

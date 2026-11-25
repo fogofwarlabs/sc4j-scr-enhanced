@@ -28,10 +28,10 @@
         "en": "The folder where StarCraft: Remastered is installed",
         "ko": "스타크래프트: 리마스터가 설치된 폴더"
       },
-      "check": {"contains": [".build.info", "x86_64/StarCraft.exe"]},
+      "check": {"contains": [".build.info"], "containsAny": ["x86_64/StarCraft.exe", "x86_64/StarCraft.app/Contents/MacOS/StarCraft"]},
       "message": {
-        "en": "Not a StarCraft: Remastered folder (no .build.info or x86_64/StarCraft.exe)",
-        "ko": "스타크래프트: 리마스터 폴더가 아님 (.build.info 또는 x86_64/StarCraft.exe 없음)"
+        "en": "Not a StarCraft: Remastered folder",
+        "ko": "스타크래프트: 리마스터 폴더가 아님"
       },
       "detect": {"uninstallEntries": ["StarCraft"], "programFolders": ["StarCraft"]},
       "shared": "starcraft-remastered"

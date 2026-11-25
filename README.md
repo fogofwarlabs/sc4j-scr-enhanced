@@ -98,7 +98,7 @@ When the SC:R mod changes a file the overlay replaces, the build stops and names
 
 ## Build and run
 
-Needs JDK 25. Commands run from the repository root (`./gradlew` on Linux).
+Needs JDK 25. Commands run from the repository root. On Linux and macOS write `./gradlew` for `.\gradlew.bat` and `/` for `\` in paths (`../sc4j/gradlew -p ../sc4j devInstall`).
 
 ```powershell
 git clone --recurse-submodules https://github.com/fogofwarlabs/sc4j-scr-enhanced.git

@@ -1,6 +1,7 @@
 package org.fogofwarlabs.sc4j.screnhanced.script.inspector;
 
 import org.fogofwarlabs.sc4j.scr.game.state.Game;
+import org.fogofwarlabs.sc4j.screnhanced.script.ScriptCompiledMapUtils;
 import org.fogofwarlabs.sc4j.screnhanced.script.runtime.ScriptConsole;
 import org.fogofwarlabs.sc4j.screnhanced.script.runtime.ScriptRuntime;
 import org.jetbrains.annotations.NotNull;
@@ -158,7 +159,8 @@ final class InspectedGame {
 
     /**
      * Creates the parameters of the {@code Debugger.scriptParsed} event of each script of the script package, in name order. A script's id is
-     * the unique id of the default context and the script name; its URL is the script name, as in the stack traces.
+     * the unique id of the default context and the script name; its URL is the script name, as in the stack traces. A script that holds a
+     * source map ({@link ScriptCompiledMapUtils}) has its URL as the {@code sourceMapURL}, so that DevTools shows the sources.
      *
      * @return the parameters
      */
@@ -168,6 +170,7 @@ final class InspectedGame {
 
         for (Map.Entry<String, byte[]> script : new TreeMap<>(this.runtime.getScripts()).entrySet()) {
             String source = new String(script.getValue(), StandardCharsets.UTF_8);
+            String sourceMapUrl = ScriptCompiledMapUtils.findReference(source);
             Map<String, Object> description = new LinkedHashMap<>();
 
             description.put("scriptId", this.getScriptId(script.getKey()));
@@ -181,6 +184,10 @@ final class InspectedGame {
             description.put("isModule", false);
             description.put("length", source.length());
             description.put("scriptLanguage", "JavaScript");
+
+            if (sourceMapUrl != null) {
+                description.put("sourceMapURL", sourceMapUrl);
+            }
 
             descriptions.add(description);
         }

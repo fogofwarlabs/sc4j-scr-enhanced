@@ -527,7 +527,19 @@ public final class ScriptProtector {
 
         if (this.root.getComments() != null) {
             for (Comment comment : this.root.getComments()) {
-                this.addSpan(new Span(comment.getAbsolutePosition(), comment.getAbsolutePosition() + comment.getLength(), null, true));
+                int start = comment.getAbsolutePosition();
+                int end = start + comment.getLength();
+
+                // A line comment ends at its line break: Rhino's length of a line comment at the end of the text misses its last character.
+                if (comment.getCommentType() == Token.CommentType.LINE) {
+                    end = start;
+
+                    while (end < this.source.length() && !isLineBreak(this.source.charAt(end))) {
+                        end++;
+                    }
+                }
+
+                this.addSpan(new Span(start, end, null, true));
             }
         }
     }

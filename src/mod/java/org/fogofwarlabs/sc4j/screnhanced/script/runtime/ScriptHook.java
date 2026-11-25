@@ -160,6 +160,10 @@ public enum ScriptHook {
      * The prefix of every local hook name.
      */
     public static final @NotNull String LOCAL_NAME_PREFIX = "onLocal";
+    /**
+     * The prefix of every decision hook name.
+     */
+    public static final @NotNull String DECISION_NAME_PREFIX = "onBefore";
 
     private static final @NotNull Map<String, ScriptHook> HOOKS_BY_FUNCTION_NAME = new HashMap<>();
 
@@ -222,5 +226,15 @@ public enum ScriptHook {
      */
     public boolean isLocal() {
         return this.local;
+    }
+
+    /**
+     * Checks whether the hook is a decision hook, which decides an outcome of a game routine: its name starts with
+     * {@value #DECISION_NAME_PREFIX}.
+     *
+     * @return {@code true} if the hook is a decision hook, {@code false} otherwise
+     */
+    public boolean isDecision() {
+        return this.functionName.startsWith(DECISION_NAME_PREFIX);
     }
 }

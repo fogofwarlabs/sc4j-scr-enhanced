@@ -52,6 +52,35 @@ final class ScriptPackageTest {
     }
 
     @Test
+    void read_folder_should_leave_out_hidden_files(@TempDir @NotNull Path folder) throws IOException {
+        ScriptMapScenario.writeFolder(folder, Map.of(ScriptManifest.FILE_NAME, MANIFEST, "main.js", "1;", "._main.js", "-",
+                                                     ".git/hooks/check.js", "2;", "resources/.DS_Store", "-", "resources/.cache/a.grp", "-",
+                                                     "resources/a.grp", "GRP"));
+
+        ScriptPackage scriptPackage = ScriptPackage.readFolder(folder);
+
+        Assertions.assertEquals(List.of("main.js"), List.copyOf(scriptPackage.getScripts().keySet()));
+        Assertions.assertEquals(List.of("a.grp"), List.copyOf(scriptPackage.getResources().keySet()));
+    }
+
+    @Test
+    void write_folder_should_write_into_a_folder_that_holds_only_hidden_entries(@TempDir @NotNull Path folder) throws IOException {
+        Path hiddenOnly = folder.resolve("hidden");
+        Path visible = folder.resolve("visible");
+
+        ScriptMapScenario.writeFolder(folder.resolve("source"), Map.of(ScriptManifest.FILE_NAME, MANIFEST, "main.js", "1;"));
+        ScriptMapScenario.writeFolder(hiddenOnly, Map.of(".DS_Store", "-", ".git/HEAD", "-"));
+        ScriptMapScenario.writeFolder(visible, Map.of("notes.txt", "-"));
+
+        ScriptPackage scriptPackage = ScriptPackage.readFolder(folder.resolve("source"));
+
+        scriptPackage.writeFolder(hiddenOnly);
+
+        Assertions.assertEquals(List.of("main.js"), List.copyOf(ScriptPackage.readFolder(hiddenOnly).getScripts().keySet()));
+        Assertions.assertThrows(IOException.class, () -> scriptPackage.writeFolder(visible));
+    }
+
+    @Test
     void read_folder_should_fail_without_a_manifest(@TempDir @NotNull Path folder) throws IOException {
         assertFolderRefused(folder, Map.of("main.js", "1;"), ScriptManifest.FILE_NAME);
     }

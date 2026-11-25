@@ -54,3 +54,4 @@ var Square = /** @class */ (function (_super) {
     return Square;
 }(Rectangle));
 exports.Square = Square;
+//# sourceMappingURL=shapes.js.map

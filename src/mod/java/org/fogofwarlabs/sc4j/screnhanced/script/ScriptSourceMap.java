@@ -15,8 +15,13 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Represents the source map of a protected map ({@link ScriptProtector}): for each script, the original line of each protected line and the
- * names the protector gave. The tool writes it next to the packed map ({@link #resolveFile}); the map does not hold it.
+ * Represents the source map of the scripts of a map: for each script, the line of the script of each protected line and the names the protector
+ * gave ({@link ScriptProtector}), and the source the script was compiled from with the source line of each line of the script
+ * ({@link ScriptCompiledMapUtils}, such as TypeScript compiled by tsc). A location maps through both: a protected line to the line of the
+ * script, then to the source line when the line has one ({@link #findOriginalLocation}).
+ * <p>
+ * The tool writes the map of a protected map next to the packed map ({@link #resolveFile}); the map does not hold it. The runtime reads the
+ * sources of the scripts of a map that is not protected from the scripts ({@link #readCompiled}).
  * <p>
  * The file is UTF-8 JSON:
  * {@snippet lang = "json":
@@ -25,13 +30,18 @@ import java.util.regex.Pattern;
  *   "scripts": {
  *     "main.js": {
  *       "lines": [3, 4, 6],
- *       "names": [{"name": "a", "original": "count", "line": 4}]
+ *       "names": [{"name": "a", "original": "count", "line": 4}],
+ *       "source": "src/main.ts",
+ *       "sourceLines": [0, 0, 1, 3, 4, 4]
  *     }
  *   }
  * }
  *}
- * {@code lines[i]} is the original line of the protected line {@code i + 1}. A name entry holds a protected name, the original name and the
- * original line of its first use; one protected name stands for different original names in different functions.
+ * {@code lines[i]} is the line of the script of the protected line {@code i + 1}. A name entry holds a protected name, the original name and the
+ * line of the script of its first use; one protected name stands for different original names in different functions. {@code source} names the
+ * source of the script and {@code sourceLines[i]} is the source line of the line {@code i + 1} of the script, {@value #NO_LINE} for a line
+ * without one. A script that is not protected has no {@code lines} and {@code names}, a script that was not compiled no {@code source} and
+ * {@code sourceLines}.
  */
 public final class ScriptSourceMap {
     /**
@@ -43,7 +53,7 @@ public final class ScriptSourceMap {
      */
     public static final int FORMAT_VERSION = 1;
     /**
-     * The line {@link #findOriginalLine} returns for a line the map does not know.
+     * The line {@link #findOriginalLine} returns for a line the map does not know, and the source line of a line without one.
      */
     public static final int NO_LINE = 0;
 
@@ -54,6 +64,9 @@ public final class ScriptSourceMap {
     private static final @NotNull String NAME_FIELD = "name";
     private static final @NotNull String ORIGINAL_FIELD = "original";
     private static final @NotNull String LINE_FIELD = "line";
+    private static final @NotNull String SOURCE_FIELD = "source";
+    private static final @NotNull String SOURCE_LINES_FIELD = "sourceLines";
+    private static final char LOCATION_SEPARATOR = ':';
     /**
      * The characters that may come before a script name in a location: a location inside a longer path or name is not one.
      */
@@ -64,7 +77,7 @@ public final class ScriptSourceMap {
     private static final @NotNull String LOCATION_LINE = ":(\\d{1,9})";
 
     /**
-     * A name the protector gave: the protected name, the original name and the original line of its first use.
+     * A name the protector gave: the protected name, the original name and the line of the script of its first use.
      */
     public static final class Rename {
         private final @NotNull String name;
@@ -76,7 +89,7 @@ public final class ScriptSourceMap {
          *
          * @param name     the protected name
          * @param original the original name
-         * @param line     the original line of the first use
+         * @param line     the line of the script of the first use
          */
         public Rename(@NotNull String name, @NotNull String original, int line) {
             this.name     = name;
@@ -99,7 +112,7 @@ public final class ScriptSourceMap {
         }
 
         /**
-         * @return the original line of the first use
+         * @return the line of the script of the first use
          */
         public int getLine() {
             return this.line;
@@ -107,15 +120,22 @@ public final class ScriptSourceMap {
     }
 
     /**
-     * The map of one script: the original line of each protected line and the names.
+     * The map of one script: the line of the script of each protected line and the names, and the source with the source line of each line of
+     * the script.
      */
     private static final class ScriptLines {
-        private final int @NotNull [] lines;
+        private final int @Nullable [] lines;
         private final @NotNull List<Rename> renames;
 
-        private ScriptLines(int @NotNull [] lines, @NotNull List<Rename> renames) {
+        private final @Nullable String source;
+        private final int @Nullable [] sourceLines;
+
+        private ScriptLines(int @Nullable [] lines, @NotNull List<Rename> renames, @Nullable String source, int @Nullable [] sourceLines) {
             this.lines   = lines;
             this.renames = renames;
+
+            this.source      = source;
+            this.sourceLines = sourceLines;
         }
     }
 
@@ -150,39 +170,83 @@ public final class ScriptSourceMap {
         }
 
         for (Map.Entry<?, ?> script : scripts.entrySet()) {
-            if (!(script.getValue() instanceof Map<?, ?> scriptFields) || !(scriptFields.get(LINES_FIELD) instanceof List<?> lineValues) ||
-                !(scriptFields.get(NAMES_FIELD) instanceof List<?> nameValues)) {
-                throw Exceptions.newIOException("The source map {0} has no lines and names of {1}.", file, script.getKey());
+            String scriptName = (String) script.getKey();
+
+            if (!(script.getValue() instanceof Map<?, ?> scriptFields) ||
+                scriptFields.containsKey(LINES_FIELD) != scriptFields.containsKey(NAMES_FIELD) ||
+                scriptFields.containsKey(SOURCE_FIELD) != scriptFields.containsKey(SOURCE_LINES_FIELD)) {
+                throw Exceptions.newIOException("The source map {0} has an entry of {1} with only one of lines and names, or of source and " +
+                                                "sourceLines.", file, scriptName);
             }
 
-            int[] lines = new int[lineValues.size()];
-            List<Rename> renames = new ArrayList<>();
-
-            for (int index = 0; index < lines.length; index++) {
-                lines[index] = readLine(lineValues.get(index), file);
-            }
-
-            for (Object nameValue : nameValues) {
-                if (!(nameValue instanceof Map<?, ?> nameFields) || !(nameFields.get(NAME_FIELD) instanceof String name) ||
-                    !(nameFields.get(ORIGINAL_FIELD) instanceof String original)) {
-                    throw Exceptions.newIOException("The source map {0} has a name of {1} without name and original.", file, script.getKey());
+            if (scriptFields.containsKey(LINES_FIELD)) {
+                if (!(scriptFields.get(NAMES_FIELD) instanceof List<?> nameValues)) {
+                    throw Exceptions.newIOException("The source map {0} has names of {1} that are no list.", file, scriptName);
                 }
 
-                renames.add(new Rename(name, original, readLine(nameFields.get(LINE_FIELD), file)));
+                List<Rename> renames = new ArrayList<>();
+
+                for (Object nameValue : nameValues) {
+                    if (!(nameValue instanceof Map<?, ?> nameFields) || !(nameFields.get(NAME_FIELD) instanceof String name) ||
+                        !(nameFields.get(ORIGINAL_FIELD) instanceof String original)) {
+                        throw Exceptions.newIOException("The source map {0} has a name of {1} without name and original.", file, scriptName);
+                    }
+
+                    renames.add(new Rename(name, original, readLine(nameFields.get(LINE_FIELD), file)));
+                }
+
+                sourceMap.addScript(scriptName, readLines(scriptFields.get(LINES_FIELD), file), renames);
             }
 
-            sourceMap.addScript((String) script.getKey(), lines, renames);
+            if (scriptFields.containsKey(SOURCE_FIELD)) {
+                if (!(scriptFields.get(SOURCE_FIELD) instanceof String source)) {
+                    throw Exceptions.newIOException("The source map {0} has a source of {1} that is no text.", file, scriptName);
+                }
+
+                sourceMap.addSource(scriptName, source, readLines(scriptFields.get(SOURCE_LINES_FIELD), file));
+            }
         }
 
         return sourceMap;
     }
 
+    private static int @NotNull [] readLines(@Nullable Object value, @NotNull Path file) throws IOException {
+        if (!(value instanceof List<?> lineValues)) {
+            throw Exceptions.newIOException("The source map {0} has lines that are no list.", file);
+        }
+
+        int[] lines = new int[lineValues.size()];
+
+        for (int index = 0; index < lines.length; index++) {
+            lines[index] = readLine(lineValues.get(index), file);
+        }
+
+        return lines;
+    }
+
     private static int readLine(@Nullable Object value, @NotNull Path file) throws IOException {
-        if (!(value instanceof Long line) || line < 1 || line > Integer.MAX_VALUE) {
+        if (!(value instanceof Long line) || line < NO_LINE || line > Integer.MAX_VALUE) {
             throw Exceptions.newIOException("The source map {0} has the line {1}, which is not a line number.", file, value);
         }
 
         return line.intValue();
+    }
+
+    /**
+     * Reads the sources of compiled scripts from the source maps the scripts hold ({@link ScriptCompiledMapUtils}).
+     *
+     * @param scripts the script contents by name
+     * @return the read {@link ScriptSourceMap} instance, with the source of each script that holds a source map
+     * @throws IOException if a source map a script holds is not one
+     */
+    public static @NotNull ScriptSourceMap readCompiled(@NotNull Map<String, byte[]> scripts) throws IOException {
+        ScriptSourceMap sourceMap = new ScriptSourceMap();
+
+        for (Map.Entry<String, byte[]> script : scripts.entrySet()) {
+            ScriptCompiledMapUtils.addSource(sourceMap, script.getKey(), new String(script.getValue(), StandardCharsets.UTF_8));
+        }
+
+        return sourceMap;
     }
 
 
@@ -196,31 +260,78 @@ public final class ScriptSourceMap {
     }
 
     /**
-     * Adds the map of a script, or replaces it.
+     * Adds the protected lines of a script, or replaces them; the source of the script stays.
      *
      * @param scriptName the script name
-     * @param lines      the original line of each protected line, kept by the map
+     * @param lines      the line of the script of each protected line, kept by the map
      * @param renames    the names the protector gave
      */
     public void addScript(@NotNull String scriptName, int @NotNull [] lines, @NotNull List<Rename> renames) {
-        this.scripts.put(scriptName, new ScriptLines(lines, List.copyOf(renames)));
+        ScriptLines script = this.scripts.get(scriptName);
+
+        this.scripts.put(scriptName, new ScriptLines(lines, List.copyOf(renames), script == null ? null : script.source,
+                                                     script == null ? null : script.sourceLines));
     }
 
     /**
-     * Finds the original line of a line of a protected script.
+     * Adds the source of a compiled script, or replaces it; the protected lines of the script stay.
+     *
+     * @param scriptName  the script name
+     * @param source      the name of the source
+     * @param sourceLines the source line of each line of the script, {@value #NO_LINE} for a line without one, kept by the map
+     */
+    public void addSource(@NotNull String scriptName, @NotNull String source, int @NotNull [] sourceLines) {
+        ScriptLines script = this.scripts.get(scriptName);
+
+        this.scripts.put(scriptName, new ScriptLines(script == null ? null : script.lines, script == null ? List.of() : script.renames, source,
+                                                     sourceLines));
+    }
+
+    /**
+     * Finds the line of the script of a line of a protected script.
      *
      * @param scriptName the script name
      * @param line       the line of the protected script, from {@code 1}
-     * @return the original line, or {@value #NO_LINE} if the map has no such script or line
+     * @return the line of the script, or {@value #NO_LINE} if the map has no protected lines of such a script or no such line
      */
     public int findOriginalLine(@NotNull String scriptName, int line) {
         ScriptLines script = this.scripts.get(scriptName);
 
-        if (script == null || line < 1 || line > script.lines.length) {
+        if (script == null || script.lines == null || line < 1 || line > script.lines.length) {
             return NO_LINE;
         }
 
         return script.lines[line - 1];
+    }
+
+    /**
+     * Finds the original location of a line of a script: through the protected lines, if the script is protected, to the line of the script,
+     * then to the source line, if the line has one.
+     *
+     * @param scriptName the script name
+     * @param line       the line of the script in the map, from {@code 1}
+     * @return the original location {@code <source>:<line>} or {@code <script>:<line>}, or {@code null} if the map has no such script or the
+     * script is protected and has no such line
+     */
+    public @Nullable String findOriginalLocation(@NotNull String scriptName, int line) {
+        ScriptLines script = this.scripts.get(scriptName);
+
+        if (script == null) {
+            return null;
+        }
+
+        int scriptLine = script.lines == null ? line : this.findOriginalLine(scriptName, line);
+
+        if (scriptLine == NO_LINE) {
+            return null;
+        }
+
+        if (script.source != null && script.sourceLines != null && scriptLine >= 1 && scriptLine <= script.sourceLines.length &&
+            script.sourceLines[scriptLine - 1] != NO_LINE) {
+            return script.source + LOCATION_SEPARATOR + script.sourceLines[scriptLine - 1];
+        }
+
+        return scriptName + LOCATION_SEPARATOR + scriptLine;
     }
 
     /**
@@ -236,11 +347,11 @@ public final class ScriptSourceMap {
     }
 
     /**
-     * Replaces in a text, such as a log, each location {@code <script>:<line>} of a script of the map with the original line; a location
-     * of a line the map does not know stays.
+     * Replaces in a text, such as a log, each location {@code <script>:<line>} of a script of the map with the original location
+     * ({@link #findOriginalLocation}); a location of a line the map does not know stays.
      *
      * @param text the text
-     * @return the text with the original lines
+     * @return the text with the original locations
      */
     public @NotNull String translate(@NotNull String text) {
         if (this.scripts.isEmpty()) {
@@ -261,10 +372,9 @@ public final class ScriptSourceMap {
         StringBuilder translated = new StringBuilder();
 
         while (matcher.find()) {
-            int originalLine = this.findOriginalLine(matcher.group(1), Integer.parseInt(matcher.group(2)));
-            String location = originalLine == NO_LINE ? matcher.group() : matcher.group(1) + ":" + originalLine;
+            String originalLocation = this.findOriginalLocation(matcher.group(1), Integer.parseInt(matcher.group(2)));
 
-            matcher.appendReplacement(translated, Matcher.quoteReplacement(location));
+            matcher.appendReplacement(translated, Matcher.quoteReplacement(originalLocation == null ? matcher.group() : originalLocation));
         }
 
         return matcher.appendTail(translated).toString();
@@ -281,25 +391,30 @@ public final class ScriptSourceMap {
         Map<String, Object> values = new LinkedHashMap<>();
 
         for (Map.Entry<String, ScriptLines> script : this.scripts.entrySet()) {
-            List<Object> lines = new ArrayList<>();
-            List<Object> renames = new ArrayList<>();
+            ScriptLines scriptLines = script.getValue();
             Map<String, Object> scriptFields = new LinkedHashMap<>();
 
-            for (int line : script.getValue().lines) {
-                lines.add(line);
+            if (scriptLines.lines != null) {
+                List<Object> renames = new ArrayList<>();
+
+                for (Rename rename : scriptLines.renames) {
+                    Map<String, Object> nameFields = new LinkedHashMap<>();
+
+                    nameFields.put(NAME_FIELD, rename.getName());
+                    nameFields.put(ORIGINAL_FIELD, rename.getOriginal());
+                    nameFields.put(LINE_FIELD, rename.getLine());
+                    renames.add(nameFields);
+                }
+
+                scriptFields.put(LINES_FIELD, Arrays.stream(scriptLines.lines).boxed().toList());
+                scriptFields.put(NAMES_FIELD, renames);
             }
 
-            for (Rename rename : script.getValue().renames) {
-                Map<String, Object> nameFields = new LinkedHashMap<>();
-
-                nameFields.put(NAME_FIELD, rename.getName());
-                nameFields.put(ORIGINAL_FIELD, rename.getOriginal());
-                nameFields.put(LINE_FIELD, rename.getLine());
-                renames.add(nameFields);
+            if (scriptLines.source != null && scriptLines.sourceLines != null) {
+                scriptFields.put(SOURCE_FIELD, scriptLines.source);
+                scriptFields.put(SOURCE_LINES_FIELD, Arrays.stream(scriptLines.sourceLines).boxed().toList());
             }
 
-            scriptFields.put(LINES_FIELD, lines);
-            scriptFields.put(NAMES_FIELD, renames);
             scriptValues.put(script.getKey(), scriptFields);
         }
 

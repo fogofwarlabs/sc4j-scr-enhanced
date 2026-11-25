@@ -42,6 +42,7 @@ public final class CloneOverlay {
     private static final @NotNull String ACCEPT_TASK = "acceptOverlay";
     private static final @NotNull String LIST_SEPARATOR = ", ";
     private static final char PATH_SEPARATOR = '/';
+    private static final @NotNull String HIDDEN_NAME_PREFIX = ".";
     /**
      * The folder of a module's main sources and resources, after the module folder; the clone copies only these.
      */
@@ -50,7 +51,7 @@ public final class CloneOverlay {
     private static final byte LINE_FEED = '\n';
 
     /**
-     * Lists the files of an overlay folder.
+     * Lists the files of an overlay folder, without the hidden ones: those with a path segment that starts with {@code .}.
      *
      * @param overlayFolder the overlay folder
      * @return the paths of its files relative to the folder, with {@code /} separators, in path order
@@ -64,6 +65,7 @@ public final class CloneOverlay {
         try (Stream<Path> files = Files.walk(overlayFolder)) {
             return files.filter(Files::isRegularFile)
                         .map(file -> overlayFolder.relativize(file).toString().replace(file.getFileSystem().getSeparator().charAt(0), PATH_SEPARATOR))
+                        .filter(path -> !path.startsWith(HIDDEN_NAME_PREFIX) && !path.contains(PATH_SEPARATOR + HIDDEN_NAME_PREFIX))
                         .sorted()
                         .toList();
         }

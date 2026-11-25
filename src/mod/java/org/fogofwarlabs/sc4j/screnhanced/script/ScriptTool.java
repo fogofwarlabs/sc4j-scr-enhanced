@@ -1,35 +1,46 @@
 package org.fogofwarlabs.sc4j.screnhanced.script;
 
+import org.fogofwarlabs.sc4j.base.binary.LittleEndianUtils;
 import org.fogofwarlabs.sc4j.base.exception.Exceptions;
+import org.fogofwarlabs.sc4j.scr.client.glue.lobby.FileBrowserScreen;
+import org.fogofwarlabs.sc4j.scr.data.format.chk.ChkFile;
+import org.fogofwarlabs.sc4j.scr.data.format.mpq.MpqArchive;
 import org.fogofwarlabs.sc4j.screnhanced.script.inspector.ScriptInspector;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 /**
  * The command line tool of SC:R Enhanced Script.
  * <p>
- * Commands: {@code init <folder>} writes a new script folder ({@link ScriptProjectUtils}); {@code check <folder>} prints one line per
- * finding of a script folder ({@link ScriptCheckUtils}); {@code pack <map> --script <folder> -o <output> [--protect]} writes the map with the
- * package of the script folder to the output file, the bytes of the map followed by the script trailer ({@link ScriptStorageUtils}), which
- * replaces an old one; with {@code --protect} the map is protected: its scripts are packed in protected form ({@link ScriptProtector}) and the
- * source map is written next to the output file ({@link ScriptSourceMap#resolveFile}), not into the map. {@code unpack <map> -o <folder>}
- * writes the package of the map to the folder, which must be absent or empty, and refuses a protected map; {@code trace <source map> --at
- * <script>:<line>} prints the original location of a location of a protected script, and {@code trace <source map> --log <file>} prints the
- * file, such as a player's log, with the original locations; {@code run <map> --script <folder> [--melee] [--watch] [--inspect[=<port>]]
+ * Commands: {@code init <folder> [--ts]} writes a new script folder, with {@code --ts} a TypeScript project ({@link ScriptProjectUtils});
+ * {@code check <folder>} prints one line per finding of a script folder ({@link ScriptCheckUtils}); {@code pack <map> --script <folder> -o
+ * <output> [--protect] [--compatibility <mark>]} writes the map with the package of the script folder to the output file, the bytes of the map followed by the script
+ * trailer ({@link ScriptStorageUtils}), which replaces an old one; a script keeps the source map file that tsc wrote for it inside
+ * ({@link ScriptPackage#readFolder}), shrunk to its lines ({@link ScriptCompiledMapUtils#shrinkMap}), while {@code run} keeps the whole map.
+ * With {@code --protect} the map is protected: its scripts are packed in protected form without their source maps ({@link ScriptProtector})
+ * and the source map of the protected scripts and their sources is written next to the output file ({@link ScriptSourceMap#resolveFile}), not
+ * into the map. {@code unpack <map> -o <folder>} writes the package of the map to the folder, which
+ * must be absent or hold only hidden entries, and refuses a protected map; {@code trace <source map> --at <script>:<line>} prints the original location of a
+ * location of a protected script, and {@code trace <source map> --log <file>} prints the file, such as a player's log, with the original
+ * locations; {@code run <map> --script <folder> [--melee] [--watch] [--inspect[=<port>]]
  * [--install <folder>]} packs the script folder into a copy of the map and runs SC:R Enhanced of an SC4J install on it until the game ends
  * ({@link ScriptRunner}), as a melee game with {@code --melee}, else as a Use Map Settings game, packing again on every change of the folder
  * with {@code --watch}, with the DevTools console on the port, by default {@value ScriptInspector#DEFAULT_PORT}, with {@code --inspect}. The
  * install is the one {@code --install} names, else {@link ScriptRunner#findInstall()}.
+ * <p>
+ * The compatibility mark of {@code pack} ({@link ScriptCompatibility}) is the one of {@code --compatibility}, else that of the manifest;
+ * with {@code auto} the scan of the scripts picks it ({@link ScriptCompatibilityScan}). The mark decides the extension of the output file: an
+ * {@code enhanced-only} map gets {@value ScriptCompatibility#ENHANCED_MAP_EXTENSION} in place of a map extension at the end of the output
+ * file name, or after a name without one; a {@code compatible} map keeps the {@code .scm} or {@code .scx} of the output file name, else gets
+ * that of the input map or, without one, the one its scenario version gives. {@code pack} prints the file it wrote, the mark and its reasons.
  */
 public final class ScriptTool {
     /**
@@ -57,6 +68,10 @@ public final class ScriptTool {
      */
     public static final @NotNull String RUN_COMMAND = "run";
     /**
+     * The option of {@value #INIT_COMMAND} that writes a TypeScript project.
+     */
+    public static final @NotNull String TYPESCRIPT_OPTION = "--ts";
+    /**
      * The option that names the script folder of {@value #PACK_COMMAND} and {@value #RUN_COMMAND}.
      */
     public static final @NotNull String SCRIPT_OPTION = "--script";
@@ -68,6 +83,11 @@ public final class ScriptTool {
      * The option of {@value #PACK_COMMAND} that packs a protected map.
      */
     public static final @NotNull String PROTECT_OPTION = "--protect";
+    /**
+     * The option of {@value #PACK_COMMAND} that names the compatibility mark of the map: {@code enhanced-only}, {@code compatible} or
+     * {@code auto}, over that of the manifest.
+     */
+    public static final @NotNull String COMPATIBILITY_OPTION = "--compatibility";
     /**
      * The option of {@value #TRACE_COMMAND} that names one location {@code <script>:<line>}.
      */
@@ -96,10 +116,11 @@ public final class ScriptTool {
     /**
      * The usage line.
      */
-    public static final @NotNull String USAGE = "Usage: init <folder> | check <folder> | pack <map> --script <folder> -o <output> [--protect] | " +
-                                                "unpack <map> -o <folder> | trace <source map> --at <script>:<line> | " +
-                                                "trace <source map> --log <file> | run <map> --script <folder> [--melee] [--watch] " +
-                                                "[--inspect[=<port>]] [--install <folder>]";
+    public static final @NotNull String USAGE = "Usage: init <folder> [--ts] | check <folder> | " +
+                                                "pack <map> --script <folder> -o <output> [--protect] [--compatibility enhanced-only|compatible|auto] | " +
+                                                "unpack <map> -o <folder> | " +
+                                                "trace <source map> --at <script>:<line> | trace <source map> --log <file> | " +
+                                                "run <map> --script <folder> [--melee] [--watch] [--inspect[=<port>]] [--install <folder>]";
 
     private static final int COMMAND_ARGUMENT = 0;
     private static final int PATH_ARGUMENT = 1;
@@ -109,6 +130,10 @@ public final class ScriptTool {
     private static final char LOCATION_SEPARATOR = ':';
     private static final char OPTION_VALUE_SEPARATOR = '=';
     private static final int LARGEST_PORT = 0xFFFF;
+    /**
+     * The most reasons of each kind that {@value #PACK_COMMAND} prints for its compatibility mark.
+     */
+    private static final int MAXIMUM_PRINTED_REASONS = 5;
     /**
      * The milliseconds between two looks at the script folder while the game runs.
      */
@@ -189,8 +214,18 @@ public final class ScriptTool {
         return map;
     }
 
+    /**
+     * Writes a new script folder, or with {@value #TYPESCRIPT_OPTION} a TypeScript project.
+     */
     private static int runInit(@NotNull String @NotNull [] arguments, @NotNull Path folder, @NotNull PrintStream output) throws IOException {
-        readOptions(arguments, List.of(), List.of(), List.of());
+        if (readOptions(arguments, List.of(), List.of(TYPESCRIPT_OPTION), List.of()).containsKey(TYPESCRIPT_OPTION)) {
+            ScriptProjectUtils.writeTypeScriptProject(folder);
+            output.println(Exceptions.format("Wrote the TypeScript project {0}; its script folder is {1}.", folder,
+                                             folder.resolve(ScriptProjectUtils.SCRIPT_FOLDER)));
+
+            return SUCCESS_EXIT;
+        }
+
         ScriptProjectUtils.writeProject(folder);
         output.println(Exceptions.format("Wrote the script folder {0}.", folder));
 
@@ -214,32 +249,151 @@ public final class ScriptTool {
     }
 
     /**
-     * Packs the script folder into the map; with {@value #PROTECT_OPTION} it protects the scripts and writes the source map next to the output
-     * file.
+     * Packs the script folder into the map, with the source maps of the scripts shrunk to their lines, under the output name with the
+     * extension of the compatibility mark ({@value #COMPATIBILITY_OPTION}, else the manifest's, scanned with {@code auto}); with
+     * {@value #PROTECT_OPTION} it protects the scripts and writes the source map of the protected scripts and of their compiled sources next
+     * to the output file.
      */
     private static int runPack(@NotNull String @NotNull [] arguments, @NotNull Path map, @NotNull PrintStream output) throws IOException {
         List<String> options = List.of(SCRIPT_OPTION, OUTPUT_OPTION);
-        Map<String, String> values = readOptions(arguments, options, List.of(PROTECT_OPTION), options);
-        Path outputFile = Path.of(values.get(OUTPUT_OPTION));
-        ScriptPackage scriptPackage = ScriptPackage.readFolder(Path.of(values.get(SCRIPT_OPTION)));
+        Map<String, String> values = readOptions(arguments, List.of(SCRIPT_OPTION, OUTPUT_OPTION, COMPATIBILITY_OPTION), List.of(PROTECT_OPTION), options);
+        ScriptPackage scriptPackage = ScriptCompiledMapUtils.shrinkMaps(ScriptPackage.readFolder(Path.of(values.get(SCRIPT_OPTION))));
+        byte[] mapFile = Files.readAllBytes(map);
+        ScriptCompatibility mark = values.containsKey(COMPATIBILITY_OPTION) ? readCompatibility(values.get(COMPATIBILITY_OPTION))
+                                                                            : scriptPackage.getManifest().getCompatibility();
+        ScriptCompatibilityScan scan = mark == ScriptCompatibility.ENHANCED_ONLY ? null : ScriptCompatibilityScan.scan(scriptPackage);
+        ScriptCompatibility compatibility = mark == ScriptCompatibility.AUTO && scan != null ? scan.getCompatibility() : mark;
+        Path outputFile = resolveOutputFile(Path.of(values.get(OUTPUT_OPTION)), map, mapFile, compatibility);
 
         if (!values.containsKey(PROTECT_OPTION)) {
-            Files.write(outputFile, ScriptStorageUtils.writePackage(Files.readAllBytes(map), map.toString(), scriptPackage));
+            Files.write(outputFile, ScriptStorageUtils.writePackage(mapFile, map.toString(), scriptPackage));
             printPacked(output, scriptPackage, outputFile);
+            printCompatibility(output, values.containsKey(COMPATIBILITY_OPTION), mark, compatibility, scan);
 
             return SUCCESS_EXIT;
         }
 
-        ScriptSourceMap sourceMap = new ScriptSourceMap();
+        ScriptSourceMap sourceMap = ScriptSourceMap.readCompiled(scriptPackage.getScripts());
         ScriptPackage protectedPackage = ScriptProtector.protectPackage(scriptPackage, sourceMap);
         Path sourceMapFile = ScriptSourceMap.resolveFile(outputFile);
 
-        Files.write(outputFile, ScriptStorageUtils.writePackage(Files.readAllBytes(map), map.toString(), protectedPackage, true));
+        Files.write(outputFile, ScriptStorageUtils.writePackage(mapFile, map.toString(), protectedPackage, true));
         sourceMap.write(sourceMapFile);
         printPacked(output, protectedPackage, outputFile);
+        printCompatibility(output, values.containsKey(COMPATIBILITY_OPTION), mark, compatibility, scan);
         output.println(Exceptions.format("The map is protected. Wrote the source map {0}; the map does not hold it.", sourceMapFile));
 
         return SUCCESS_EXIT;
+    }
+
+    private static @NotNull ScriptCompatibility readCompatibility(@NotNull String name) {
+        ScriptCompatibility compatibility = ScriptCompatibility.findByName(name);
+
+        if (compatibility == null) {
+            throw Exceptions.newIllegalArgumentException("The mark {0} of {1} is not {2}, {3} or {4}.", name, COMPATIBILITY_OPTION,
+                                                         ScriptCompatibility.ENHANCED_ONLY.getName(), ScriptCompatibility.COMPATIBLE.getName(),
+                                                         ScriptCompatibility.AUTO.getName());
+        }
+
+        return compatibility;
+    }
+
+    /**
+     * Gives the output file of a map with a compatibility mark: an {@code enhanced-only} map replaces a map extension at the end of the output
+     * name with {@value ScriptCompatibility#ENHANCED_MAP_EXTENSION}, or appends it to a name without one; a {@code compatible} map keeps the
+     * {@code .scm} or {@code .scx} of the output name, else takes the one of the input map, else the one of its scenario version.
+     *
+     * @param outputFile    the output file the command names
+     * @param map           the input map
+     * @param mapFile       the bytes of the input map
+     * @param compatibility the mark, {@code enhanced-only} or {@code compatible}
+     * @return the file to write
+     * @throws IOException if the scenario of the map cannot be read
+     */
+    private static @NotNull Path resolveOutputFile(@NotNull Path outputFile, @NotNull Path map, byte @NotNull [] mapFile,
+                                                   @NotNull ScriptCompatibility compatibility) throws IOException {
+        String name = String.valueOf(outputFile.getFileName());
+        String outputExtension = findMapExtension(name);
+        String stem = outputExtension == null ? name : name.substring(0, name.length() - outputExtension.length());
+        String extension;
+
+        if (compatibility == ScriptCompatibility.ENHANCED_ONLY) {
+            extension = ScriptCompatibility.ENHANCED_MAP_EXTENSION;
+        } else if (outputExtension != null && !outputExtension.equalsIgnoreCase(ScriptCompatibility.ENHANCED_MAP_EXTENSION)) {
+            return outputFile;
+        } else {
+            String mapExtension = findMapExtension(String.valueOf(map.getFileName()));
+
+            if (mapExtension != null && !mapExtension.equalsIgnoreCase(ScriptCompatibility.ENHANCED_MAP_EXTENSION)) {
+                extension = mapExtension.toLowerCase(Locale.ROOT);
+            } else {
+                extension = isExpansionMap(mapFile, map.toString()) ? FileBrowserScreen.EXPANSION_MAP_EXTENSION : FileBrowserScreen.ORIGINAL_MAP_EXTENSION;
+            }
+        }
+
+        return outputFile.resolveSibling(stem + extension);
+    }
+
+    /**
+     * @return the map extension at the end of a file name ({@code .scm}, {@code .scx} or {@value ScriptCompatibility#ENHANCED_MAP_EXTENSION}, in any case) as the name has it, or {@code null} if it ends with none
+     */
+    private static @Nullable String findMapExtension(@NotNull String fileName) {
+        for (String extension : List.of(FileBrowserScreen.ORIGINAL_MAP_EXTENSION, FileBrowserScreen.EXPANSION_MAP_EXTENSION,
+                                        ScriptCompatibility.ENHANCED_MAP_EXTENSION)) {
+            if (fileName.toLowerCase(Locale.ROOT).endsWith(extension)) {
+                return fileName.substring(fileName.length() - extension.length());
+            }
+        }
+
+        return null;
+    }
+
+    private static boolean isExpansionMap(byte @NotNull [] mapFile, @NotNull String description) throws IOException {
+        byte[] map = Arrays.copyOf(mapFile, ScriptStorageUtils.findMapEnd(mapFile, description));
+        ChkFile scenario = ChkFile.parseTolerant(MpqArchive.open(map, description, true).readFile(ChkFile.ARCHIVE_ENTRY));
+        byte[] version = scenario.getSection(ChkFile.VERSION_SECTION);
+
+        return version != null && version.length >= Short.BYTES && ChkFile.isExpansionVersion(LittleEndianUtils.readUnsigned16(version, 0));
+    }
+
+    /**
+     * Prints the compatibility mark of the packed map with its source and reasons: the first uses of gameplay members and what the scan
+     * cannot judge, or for a map marked {@code compatible} by hand whose scripts change the game, the first reason as a warning.
+     */
+    private static void printCompatibility(@NotNull PrintStream output, boolean fromOption, @NotNull ScriptCompatibility mark,
+                                           @NotNull ScriptCompatibility compatibility, @Nullable ScriptCompatibilityScan scan) {
+        if (mark != ScriptCompatibility.AUTO) {
+            output.println(Exceptions.format("The map is {0}, as {1} says.", compatibility.getName(), fromOption ? COMPATIBILITY_OPTION : "the manifest"));
+
+            if (scan != null && scan.getCompatibility() == ScriptCompatibility.ENHANCED_ONLY) {
+                ScriptCompatibilityScan.Reason reason = scan.getUses().isEmpty() ? scan.getWarnings().getFirst() : scan.getUses().getFirst();
+
+                output.println(Exceptions.format("Warning: the scripts may change the game ({0}).", reason));
+            }
+
+            return;
+        }
+
+        if (scan == null || compatibility == ScriptCompatibility.COMPATIBLE) {
+            output.println("The map is compatible: the scripts do not change the game.");
+
+            return;
+        }
+
+        output.println(scan.getUses().isEmpty() ? "The map is enhanced-only: the scan cannot check every script."
+                                                : "The map is enhanced-only: the scripts change the game.");
+        printReasons(output, "  ", scan.getUses());
+        printReasons(output, "Warning: ", scan.getWarnings());
+    }
+
+    private static void printReasons(@NotNull PrintStream output, @NotNull String prefix, @NotNull List<ScriptCompatibilityScan.Reason> reasons) {
+        for (int index = 0; index < reasons.size() && index < MAXIMUM_PRINTED_REASONS; index++) {
+            output.println(prefix + reasons.get(index));
+        }
+
+        if (reasons.size() > MAXIMUM_PRINTED_REASONS) {
+            output.println(Exceptions.format("{0}and {1} more.", prefix, reasons.size() - MAXIMUM_PRINTED_REASONS));
+        }
     }
 
     private static int runUnpack(@NotNull String @NotNull [] arguments, @NotNull Path map, @NotNull PrintStream output) throws IOException {
@@ -297,13 +451,13 @@ public final class ScriptTool {
             throw Exceptions.newIllegalArgumentException("The location {0} is not <script>:<line>.", location);
         }
 
-        int originalLine = sourceMap.findOriginalLine(scriptName, line);
+        String originalLocation = sourceMap.findOriginalLocation(scriptName, line);
 
-        if (originalLine == ScriptSourceMap.NO_LINE) {
+        if (originalLocation == null) {
             throw Exceptions.newIOException("The source map {0} has no line {1} of {2}.", sourceMapFile, line, scriptName);
         }
 
-        output.println(scriptName + LOCATION_SEPARATOR + originalLine);
+        output.println(originalLocation);
 
         return SUCCESS_EXIT;
     }

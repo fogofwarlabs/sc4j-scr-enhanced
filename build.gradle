@@ -150,9 +150,11 @@ def configureCloneTool = { JavaExec task, String mode ->
     task.mainClass = 'org.fogofwarlabs.sc4j.screnhanced.clone.ScrModClone'
     task.errorOutput = errors
     task.ignoreExitValue = true
-    task.argumentProviders.add({
-        [mode, scrFolder.absolutePath, overlay.absolutePath, overlayLock.absolutePath, overlayBase.absolutePath, ':']
-    } as CommandLineArgumentProvider)
+    task.argumentProviders.add(
+        {
+            [mode, scrFolder.absolutePath, overlay.absolutePath, overlayLock.absolutePath, overlayBase.absolutePath, ':']
+        } as CommandLineArgumentProvider
+    )
     task.doFirst {
         errors.reset()
     }
@@ -172,9 +174,11 @@ def cloneScrMod = tasks.register('cloneScrMod', JavaExec) { task ->
     inputs.dir(overlay).withPropertyName('overlay')
     inputs.files(overlayLock).withPropertyName('overlayLock')
     outputs.dir(cloneRoot)
-    argumentProviders.add({
-        [cloneRoot.get().asFile.absolutePath] + scrModuleNames
-    } as CommandLineArgumentProvider)
+    argumentProviders.add(
+        {
+            [cloneRoot.get().asFile.absolutePath] + scrModuleNames
+        } as CommandLineArgumentProvider
+    )
     doFirst {
         project.delete(cloneRoot)
     }
@@ -211,9 +215,11 @@ tasks.register('runScriptTool', JavaExec) {
     classpath = sourceSets.mod.runtimeClasspath
     mainClass = 'org.fogofwarlabs.sc4j.screnhanced.script.ScriptTool'
     def install = sc4jMod.install
-    jvmArgumentProviders.add({
-        install.isPresent() ? ['-Dsc4j.install=' + install.get().asFile.absolutePath] : []
-    } as CommandLineArgumentProvider)
+    jvmArgumentProviders.add(
+        {
+            install.isPresent() ? ['-Dsc4j.install=' + install.get().asFile.absolutePath] : []
+        } as CommandLineArgumentProvider
+    )
 }
 
 def modJar = tasks.named('jar') {

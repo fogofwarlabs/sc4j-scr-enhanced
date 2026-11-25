@@ -21,12 +21,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
- * Tests the new script folder of {@link ScriptProjectUtils} and that its declarations name exactly what a script sees: every global, every
- * member of the game API objects, the hooks and their event and decision objects, and the type constants; declared standard objects exist.
- * The prelude's hooks are those the runtime knows ({@link ScriptHook}).
+ * Tests the new script folder and TypeScript project of {@link ScriptProjectUtils} and that its declarations name exactly what a script sees:
+ * every global, every member of the game API objects, the hooks and their event and decision objects, and the type constants; declared standard
+ * objects exist. The prelude's hooks are those the runtime knows ({@link ScriptHook}).
  */
 final class ScriptProjectUtilsTest {
     private static final @NotNull String PRELUDE_FOLDER = "/org/fogofwarlabs/sc4j/screnhanced/script/prelude/";
@@ -42,6 +43,10 @@ final class ScriptProjectUtilsTest {
      * The deepest property path the declarations are followed to.
      */
     private static final int MAXIMUM_PATH_DEPTH = 3;
+    /**
+     * A plain type name, without type arguments, unions or array brackets.
+     */
+    private static final @NotNull Pattern TYPE_NAME = Pattern.compile("[A-Za-z_$][\\w$]*");
     /**
      * The runtime globals the declarations leave out: the generator function replacement, which only throws.
      */
@@ -233,16 +238,39 @@ final class ScriptProjectUtilsTest {
                                                          """;
 
     /**
-     * Reads the declarations of every declarations file as one text.
+     * Finds the plain type name of a property, or of the first parameter of a method.
+     *
+     * @return the type name, or an empty text when the type is not a plain name
      */
-    private static @NotNull ScriptDeclarationsCheck readDeclarations() throws IOException {
-        StringBuilder text = new StringBuilder();
+    private static @NotNull String findTypeName(@NotNull ScriptDeclarations.Member member) {
+        String type = member.isMethod() ? member.getParameterTypes().stream().findFirst().orElse("") : member.getType();
 
-        for (String fileName : ScriptProjectUtils.DECLARATION_FILE_NAMES) {
-            text.append(new String(ScriptProjectUtils.readDeclarations(fileName), StandardCharsets.UTF_8)).append('\n');
+        return TYPE_NAME.matcher(type).matches() ? type : "";
+    }
+
+    /**
+     * Finds the interfaces of a global's type: the type names joined by {@code &}, without type arguments.
+     *
+     * @return the interface names, empty if the global is a function or its type is not made of declared interfaces
+     */
+    private static @NotNull List<String> findInterfaces(@NotNull ScriptDeclarations declarations, @NotNull ScriptDeclarations.Member global) {
+        List<String> names = new ArrayList<>();
+
+        if (global.isMethod()) {
+            return names;
         }
 
-        return new ScriptDeclarationsCheck(text.toString());
+        for (String part : global.getType().split("&")) {
+            String name = part.contains("<") ? part.substring(0, part.indexOf('<')).trim() : part.trim();
+
+            if (!declarations.isInterface(name)) {
+                return List.of();
+            }
+
+            names.add(name);
+        }
+
+        return names;
     }
 
     private static @NotNull String readPreludeFile(@NotNull String fileName) throws IOException {
@@ -257,7 +285,7 @@ final class ScriptProjectUtilsTest {
      * Lists the property paths to read: each declared global with an interface type, and each property of an interface type below it other
      * than the instance interfaces, which {@link #readInstanceNames} reads.
      */
-    private static void collectPaths(@NotNull ScriptDeclarationsCheck declarations, @NotNull List<String> path, @NotNull List<String> interfaces,
+    private static void collectPaths(@NotNull ScriptDeclarations declarations, @NotNull List<String> path, @NotNull List<String> interfaces,
                                      @NotNull Map<List<String>, List<String>> paths) {
         paths.put(path, interfaces);
 
@@ -265,12 +293,14 @@ final class ScriptProjectUtilsTest {
             return;
         }
 
-        for (ScriptDeclarationsCheck.Member member : declarations.getMembers(interfaces).values()) {
-            if (!member.isMethod() && declarations.isInterface(member.getType()) && !INSTANCES.containsKey(member.getType())) {
+        for (Map.Entry<String, ScriptDeclarations.Member> member : declarations.collectMembers(interfaces).entrySet()) {
+            String type = findTypeName(member.getValue());
+
+            if (!member.getValue().isMethod() && declarations.isInterface(type) && !INSTANCES.containsKey(type)) {
                 List<String> childPath = new ArrayList<>(path);
 
-                childPath.add(member.getName());
-                collectPaths(declarations, childPath, List.of(member.getType()), paths);
+                childPath.add(member.getKey());
+                collectPaths(declarations, childPath, List.of(type), paths);
             }
         }
     }
@@ -499,12 +529,88 @@ final class ScriptProjectUtilsTest {
     }
 
     @Test
+    void write_project_should_write_into_a_folder_that_holds_only_hidden_entries(@TempDir @NotNull Path folder) throws IOException {
+        Path project = folder.resolve("project");
+
+        Files.createDirectories(project.resolve(".git"));
+        Files.writeString(project.resolve(".DS_Store"), "-");
+
+        ScriptProjectUtils.writeProject(project);
+
+        Assertions.assertEquals(ScriptProjectUtils.MAIN_FILE_NAME, ScriptPackage.readFolder(project).getManifest().getMain());
+    }
+
+    @Test
+    void write_type_script_project_should_write_a_project_whose_output_packs_with_source_lines(@TempDir @NotNull Path folder) throws IOException {
+        Path project = folder.resolve("Star Map");
+        Path scriptFolder = project.resolve(ScriptProjectUtils.SCRIPT_FOLDER);
+
+        ScriptProjectUtils.writeTypeScriptProject(project);
+
+        Map<?, ?> tsconfig = (Map<?, ?>) JsonReader.parse(Files.readAllBytes(project.resolve(ScriptProjectUtils.TSCONFIG_FILE_NAME)));
+        Map<?, ?> options = (Map<?, ?>) tsconfig.get("compilerOptions");
+        String mainSource = Files.readString(project.resolve(ScriptProjectUtils.SOURCE_FOLDER).resolve(ScriptProjectUtils.MAIN_SOURCE_FILE_NAME));
+
+        Assertions.assertEquals("ES5", options.get("target"));
+        Assertions.assertEquals("commonjs", options.get("module"));
+        Assertions.assertEquals("force", options.get("moduleDetection"));
+        Assertions.assertEquals(true, options.get("noLib"));
+        Assertions.assertEquals(true, options.get("sourceMap"));
+        Assertions.assertEquals(ScriptProjectUtils.SOURCE_FOLDER, options.get("rootDir"));
+        Assertions.assertEquals(ScriptProjectUtils.SCRIPT_FOLDER, options.get("outDir"));
+        Assertions.assertEquals(List.of(ScriptProjectUtils.SOURCE_FOLDER + "/**/*.ts"), tsconfig.get("include"));
+        Assertions.assertEquals(Set.copyOf(ScriptProjectUtils.DECLARATION_FILE_NAMES), Set.copyOf((List<?>) tsconfig.get("files")));
+        Assertions.assertTrue(mainSource.contains("defineHooks({"), mainSource);
+
+        for (String fileName : ScriptProjectUtils.DECLARATION_FILE_NAMES) {
+            Assertions.assertArrayEquals(ScriptProjectUtils.readDeclarations(fileName), Files.readAllBytes(project.resolve(fileName)));
+        }
+
+        try (Stream<Path> files = Files.list(scriptFolder)) {
+            Assertions.assertEquals(Set.of(ScriptManifest.FILE_NAME, ScriptPackage.RESOURCE_FOLDER),
+                                    new HashSet<>(files.map(file -> file.getFileName().toString()).toList()));
+        }
+
+        // The output of tsc for the main source: the script and its source map, whose source is relative to the map file.
+        Files.writeString(scriptFolder.resolve(ScriptProjectUtils.MAIN_FILE_NAME), "defineHooks({});\n//# sourceMappingURL=main.js.map");
+        Files.writeString(scriptFolder.resolve("main.js.map"), "{\"version\":3,\"file\":\"main.js\",\"sourceRoot\":\"\"," +
+                                                               "\"sources\":[\"../src/main.ts\"],\"names\":[],\"mappings\":\"AAAA\"}");
+
+        ScriptPackage scriptPackage = ScriptPackage.readFolder(scriptFolder);
+        ScriptSourceMap sourceMap = ScriptSourceMap.readCompiled(scriptPackage.getScripts());
+
+        Assertions.assertEquals("Star Map", scriptPackage.getManifest().getName());
+        Assertions.assertEquals(ScriptProjectUtils.MAIN_FILE_NAME, scriptPackage.getManifest().getMain());
+        Assertions.assertEquals(Set.of(ScriptProjectUtils.MAIN_FILE_NAME), scriptPackage.getScripts().keySet());
+        Assertions.assertEquals(ScriptProjectUtils.SOURCE_FOLDER + "/" + ScriptProjectUtils.MAIN_SOURCE_FILE_NAME + ":1",
+                                sourceMap.findOriginalLocation(ScriptProjectUtils.MAIN_FILE_NAME, 1));
+    }
+
+    @Test
+    void check_notes_name_the_type_script_settings_of_a_new_project(@TempDir @NotNull Path folder) throws IOException {
+        Path project = folder.resolve("project");
+        Path scriptFolder = folder.resolve("script");
+
+        ScriptProjectUtils.writeTypeScriptProject(project);
+        ScriptMapScenario.writeFolder(scriptFolder, Map.of(ScriptManifest.FILE_NAME, "{\"name\": \"A\", \"main\": \"main.js\", \"api\": \"1\"}",
+                                                           "main.js", "class Unit {}\n", "lib.js", "export const value = 1;\n"));
+
+        Map<?, ?> options = (Map<?, ?>) ((Map<?, ?>) JsonReader.parse(Files.readAllBytes(project.resolve(ScriptProjectUtils.TSCONFIG_FILE_NAME))))
+                .get("compilerOptions");
+        List<String> messages = ScriptCheckUtils.check(scriptFolder).stream().map(ScriptFinding::getMessage).toList();
+
+        Assertions.assertEquals(2, messages.size(), messages::toString);
+        Assertions.assertTrue(messages.get(0).contains("compile TypeScript with module " + options.get("module")), messages::toString);
+        Assertions.assertTrue(messages.get(1).contains("compile TypeScript with target " + options.get("target")), messages::toString);
+    }
+
+    @Test
     void declarations_name_every_global_and_member_of_the_runtime() throws IOException {
-        ScriptDeclarationsCheck declarations = readDeclarations();
+        ScriptDeclarations declarations = ScriptDeclarations.read();
         Map<List<String>, List<String>> paths = new LinkedHashMap<>();
 
-        for (Map.Entry<String, String> global : declarations.getGlobals().entrySet()) {
-            List<String> interfaces = declarations.getInterfaces(global.getValue());
+        for (Map.Entry<String, ScriptDeclarations.Member> global : declarations.getGlobals().entrySet()) {
+            List<String> interfaces = findInterfaces(declarations, global.getValue());
 
             if (!interfaces.isEmpty()) {
                 collectPaths(declarations, List.of(global.getKey()), interfaces, paths);
@@ -539,7 +645,7 @@ final class ScriptProjectUtilsTest {
 
             List<String> problemsBefore = new ArrayList<>(problems);
 
-            compareNames(key + " (" + path.getValue() + ")", declarations.getMembers(path.getValue()).keySet(), toNames(names), exact,
+            compareNames(key + " (" + path.getValue() + ")", declarations.collectMembers(path.getValue()).keySet(), toNames(names), exact,
                          declarations.isIndexed(path.getValue()), problems);
 
             if (!problems.equals(problemsBefore) && GENERATED_TABLES.contains(key)) {
@@ -552,8 +658,8 @@ final class ScriptProjectUtilsTest {
 
     @Test
     void declarations_name_every_hook_and_the_members_of_its_object() throws IOException {
-        ScriptDeclarationsCheck declarations = readDeclarations();
-        Map<String, ScriptDeclarationsCheck.Member> hooks = declarations.getMembers(List.of("Hooks"));
+        ScriptDeclarations declarations = ScriptDeclarations.read();
+        Map<String, ScriptDeclarations.Member> hooks = declarations.collectMembers(List.of("Hooks"));
         Set<String> hookNames = new TreeSet<>();
         Map<String, String> expressions = new LinkedHashMap<>();
         Map<String, String> interfaces = new LinkedHashMap<>();
@@ -564,11 +670,12 @@ final class ScriptProjectUtilsTest {
 
             hookNames.add(name);
 
-            ScriptDeclarationsCheck.Member member = hooks.get(name);
+            ScriptDeclarations.Member member = hooks.get(name);
+            String type = member == null ? "" : findTypeName(member);
 
-            if (member != null && declarations.isInterface(member.getType()) && hook != ScriptHook.RENDER) {
+            if (declarations.isInterface(type) && hook != ScriptHook.RENDER) {
                 expressions.put(name, createHookObjectExpression(name));
-                interfaces.put(name, member.getType());
+                interfaces.put(name, type);
             }
         }
 
@@ -586,7 +693,7 @@ final class ScriptProjectUtilsTest {
         for (Map.Entry<String, Set<String>> names : instanceNames.entrySet()) {
             String declared = interfaces.get(names.getKey());
 
-            compareNames(names.getKey() + " (" + declared + ")", declarations.getMembers(List.of(declared)).keySet(), names.getValue(), true,
+            compareNames(names.getKey() + " (" + declared + ")", declarations.collectMembers(List.of(declared)).keySet(), names.getValue(), true,
                          false, problems);
         }
 

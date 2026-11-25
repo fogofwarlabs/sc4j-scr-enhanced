@@ -15,18 +15,12 @@ env:
   MOD_ID: scr-enhanced
 
 jobs:
-  release:
-    name: release
-    # The client module ships FFmpeg natives for windows-x86_64 only.
-    runs-on: windows-latest
-    timeout-minutes: 120
-    defaults:
-      run:
-        shell: bash
+  version:
+    name: version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
     steps:
-      - name: Keep line endings
-        run: git config --global core.autocrlf false
-
       - name: Check out
         uses: actions/checkout@v7
         with:
@@ -69,6 +63,36 @@ jobs:
             exit 1
           fi
 
+  # The mod jar built and tested on a runner of every platform the engine packages, like the engine's packages.
+  jars:
+    name: jar (${{ matrix.platform }})
+    needs: version
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: windows-x64
+            runner: windows-latest
+          - platform: linux-x64
+            runner: ubuntu-latest
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+          - platform: macos-arm64
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep line endings
+        run: git config --global core.autocrlf false
+
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+
       - name: Set up the JDK
         uses: actions/setup-java@v6
         with:
@@ -80,21 +104,62 @@ jobs:
         with:
           cache-provider: basic
 
-      - name: Test
-        run: ./gradlew test
+      - name: Test and build the mod jar
+        run: ./gradlew test :jar
 
-      - name: Build the mod jar
+      - name: Upload the mod jar
+        uses: actions/upload-artifact@v7
+        with:
+          name: jar-${{ matrix.platform }}
+          path: build/libs/${{ env.MOD_ID }}.jar
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload the reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reports-${{ matrix.platform }}
+          path: |
+            **/build/reports/
+            **/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The jar holds classes and resources only, so every platform builds the same bytes; the release ships that one jar.
+  release:
+    name: release
+    needs: [version, jars]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download the mod jars
+        uses: actions/download-artifact@v8
+        with:
+          pattern: jar-*
+          path: jars
+
+      - name: Check that every platform built the same jar
         # The checksum file has the sha256sum format: the hash, two spaces and the file name.
         run: |
-          ./gradlew :jar
-          cd build/libs
-          hash=$(sha256sum "$MOD_ID.jar" | cut -d ' ' -f 1)
-          printf '%s  %s\n' "$hash" "$MOD_ID.jar" > "$MOD_ID.jar.sha256"
+          hashes=$(sha256sum jars/jar-*/"$MOD_ID.jar" | cut -d ' ' -f 1 | sort -u)
+          count=$(ls jars/jar-*/"$MOD_ID.jar" | wc -l)
+          if [ "$count" -ne 4 ] || [ "$(echo "$hashes" | wc -l)" -ne 1 ]; then
+            echo "::error::Expected 4 equal $MOD_ID.jar files, found $count with these hashes: $hashes"
+            exit 1
+          fi
+          mkdir -p release
+          cp "jars/jar-windows-x64/$MOD_ID.jar" release/
+          echo "$hashes  $MOD_ID.jar" > "release/$MOD_ID.jar.sha256"
 
       - name: Tag and create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
+          TAG: ${{ needs.version.outputs.tag }}
         run: |
           # The notes list the commits since the previous release tag, without the version changes and the release merges.
           previous=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_SHA^" 2>/dev/null || true)
@@ -108,15 +173,4 @@ jobs:
             fi
           } > release-notes.md
 
-          gh release create "$TAG" "build/libs/$MOD_ID.jar" "build/libs/$MOD_ID.jar.sha256" --target "$GITHUB_SHA" --title "$TAG" --notes-file release-notes.md
-
-      - name: Upload the reports
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: reports
-          path: |
-            **/build/reports/
-            **/build/test-results/
-          if-no-files-found: ignore
-          retention-days: 14
+          gh release create "$TAG" "release/$MOD_ID.jar" "release/$MOD_ID.jar.sha256" --target "$GITHUB_SHA" --title "$TAG" --notes-file release-notes.md

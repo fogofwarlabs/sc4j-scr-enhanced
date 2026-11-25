@@ -7,7 +7,9 @@
 // identically on every player's game and may change the game state. Local code is onLocalFrame, onRender and the local input hooks. It runs
 // only on this player's machine, for display and input. A function documented "Shared code only." throws a TypeError in local code, "Local
 // code only." throws a TypeError in shared code, and "Only in onRender." throws a TypeError outside onRender; a function without such a note
-// works in both. A function that changes the game state also throws a TypeError while the game is read-only, inside a decision hook.
+// works in both. A function that changes the game state also throws a TypeError while the game is read-only, inside a decision hook. A shared
+// code function documented "works while the game is read-only" changes no game state, and one documented "Changes graphics only." changes
+// only what is drawn; the script tool's pack takes neither as a change of the game.
 //
 // An integer argument must be an integral number inside the signed 32-bit range, else the function throws a TypeError. An id outside its
 // range, a unit, sprite, image or bullet id that names nothing live ("... does not exist") and a value outside its range throw a RangeError.
@@ -2060,7 +2062,7 @@ interface CoreUnit {
 
     /**
      * Finds the position in pixels where {@link create} would place a unit, without creating it: the free position search around the requested
-     * position. Shared code only, as it uses the unit finder's working state.
+     * position. Shared code only, as it uses the unit finder's working state; works while the game is read-only.
      *
      * @param owner the player id, 0 to 11
      * @returns [x, y], or null if {@link create} would create none there
@@ -2241,12 +2243,12 @@ interface CoreUnit {
 
     /**
      * Finds the live units whose bounds meet a rectangle in pixels, in the unit finder's order. Shared code only, as it uses the finder's
-     * working state.
+     * working state; works while the game is read-only.
      */
     findInRectangle(left: number, top: number, right: number, bottom: number): number[];
 
     /**
-     * Finds the live units whose bounds hold a point in pixels, in the unit finder's order. Shared code only.
+     * Finds the live units whose bounds hold a point in pixels, in the unit finder's order. Shared code only; works while the game is read-only.
      */
     findAtPoint(x: number, y: number): number[];
 
@@ -2692,7 +2694,7 @@ interface CoreTerrain {
      * Replaces the picture of the megatile an MTXM value shows, for every tile that shows the megatile, as presentation: the HD and HD2 graphics
      * draw the image stretched over the tile with its alpha over the installed tile, the classic graphics its pixels quantized to the tileset
      * palette where they are opaque. Shared code only, at the module top level or in onStart. Throws a RangeError when a side of the image is
-     * not a multiple of 32 pixels.
+     * not a multiple of 32 pixels. Changes graphics only.
      *
      * @param value   the MTXM value
      * @param imageId an image handle ({@link CoreResources.getImage}), as wide and high as a multiple of 32 pixels (32, 64 or 128)
@@ -3697,7 +3699,7 @@ interface CoreGraphics {
 interface CoreEvents {
     /**
      * Reads the frame's events. Reading does not take them: every call of a frame returns the same records, and the events that happen
-     * meanwhile wait for the next frame start. Shared code only.
+     * meanwhile wait for the next frame start. Shared code only; works while the game is read-only.
      *
      * @returns a new array of the records of the frame's events, in the order they happened
      */
@@ -3728,7 +3730,7 @@ interface CoreCommand {
     submit(value: any): void;
 
     /**
-     * Reads the script commands that ran since the previous frame start. Shared code only.
+     * Reads the script commands that ran since the previous frame start. Shared code only; works while the game is read-only.
      *
      * @returns new records of the commands, in the order they ran, each with a new copy of its value
      */

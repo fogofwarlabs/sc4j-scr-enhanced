@@ -15,8 +15,8 @@ import java.nio.file.Path;
 import java.util.List;
 
 /**
- * Tests the file round trip of {@link ScriptSourceMap}, the lookup of original lines, and the translation of the error locations of protected
- * scripts back to the original lines.
+ * Tests the file round trip of {@link ScriptSourceMap}, the lookup of original lines and of original locations through the protected lines and
+ * the sources of compiled scripts, and the translation of the error locations of protected scripts back to the original lines.
  */
 final class ScriptSourceMapTest {
     private static final @NotNull String MAIN_SCRIPT = "main.js";
@@ -59,6 +59,39 @@ final class ScriptSourceMapTest {
         Assertions.assertEquals("count", rename.getOriginal());
         Assertions.assertEquals(4, rename.getLine());
         Assertions.assertTrue(read.getRenames(LIBRARY_SCRIPT).isEmpty());
+    }
+
+    @Test
+    void write_then_read_keeps_the_sources_of_compiled_scripts(@TempDir @NotNull Path folder) throws IOException {
+        ScriptSourceMap sourceMap = new ScriptSourceMap();
+        Path file = folder.resolve("packed.scx" + ScriptSourceMap.FILE_SUFFIX);
+
+        sourceMap.addSource(MAIN_SCRIPT, "src/main.ts", new int[]{0, 0, 7, 9});
+        sourceMap.addScript(MAIN_SCRIPT, new int[]{3, 2, 4}, List.of(new ScriptSourceMap.Rename("a", "count", 3)));
+        sourceMap.addSource(LIBRARY_SCRIPT, "src/lib/main.ts", new int[]{2});
+        sourceMap.write(file);
+
+        ScriptSourceMap read = ScriptSourceMap.read(file);
+
+        Assertions.assertEquals("src/main.ts:7", read.findOriginalLocation(MAIN_SCRIPT, 1));
+        Assertions.assertEquals("main.js:2", read.findOriginalLocation(MAIN_SCRIPT, 2));
+        Assertions.assertEquals("src/main.ts:9", read.findOriginalLocation(MAIN_SCRIPT, 3));
+        Assertions.assertNull(read.findOriginalLocation(MAIN_SCRIPT, 4));
+        Assertions.assertEquals(3, read.findOriginalLine(MAIN_SCRIPT, 1));
+        Assertions.assertEquals("count", read.getRenames(MAIN_SCRIPT).getFirst().getOriginal());
+        Assertions.assertEquals("src/lib/main.ts:2", read.findOriginalLocation(LIBRARY_SCRIPT, 1));
+        Assertions.assertEquals("lib/main.js:5", read.findOriginalLocation(LIBRARY_SCRIPT, 5));
+        Assertions.assertEquals(ScriptSourceMap.NO_LINE, read.findOriginalLine(LIBRARY_SCRIPT, 1));
+        Assertions.assertEquals("at src/main.ts:9 and src/lib/main.ts:2", read.translate("at main.js:3 and lib/main.js:1"));
+    }
+
+    @Test
+    void read_should_fail_when_a_script_has_lines_without_names(@TempDir @NotNull Path folder) throws IOException {
+        Path file = folder.resolve("other.sourcemap.json");
+
+        Files.writeString(file, "{\"version\": 1, \"scripts\": {\"main.js\": {\"lines\": [1]}}}", StandardCharsets.UTF_8);
+
+        Assertions.assertThrows(IOException.class, () -> ScriptSourceMap.read(file));
     }
 
     @Test

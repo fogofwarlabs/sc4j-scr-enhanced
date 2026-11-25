@@ -26,7 +26,8 @@ import java.util.regex.Pattern;
  * The manifest: present and valid, the main script in the folder, the script API {@value ScriptProjectUtils#API_VERSION} (a warning
  * otherwise); the names of the scripts and resources (errors of the folder {@value #FOLDER_FILE}).
  * <p>
- * Each script, read as UTF-8 and compiled by Rhino with the settings of the runtime: the syntax errors, the first of each line, with a note when the
+ * Each script, read as UTF-8 and compiled by Rhino with the settings of the runtime: the source map file it names, which must be one
+ * ({@link ScriptCompiledMapUtils#inlineMap}, an error of the whole script otherwise); the syntax errors, the first of each line, with a note when the
  * line holds syntax that Rhino 1.8.1 lacks ({@code class} and {@code super}, {@code async} and {@code await}, spread {@code ...},
  * {@code for (const ...)}, {@code import} and {@code export}), which names the TypeScript target that avoids it; after a successful compile,
  * references to the globals the runtime does not have ({@code eval}, {@code Date}, {@code java}, {@code Packages} and the other Java and timer
@@ -173,7 +174,17 @@ public final class ScriptCheckUtils {
         Map<String, byte[]> scripts = new TreeMap<>();
         Map<String, byte[]> resources = new TreeMap<>();
 
+        Map<String, String> sourceMapErrors = new HashMap<>();
+
         ScriptPackage.readFolderFiles(folder, scripts, resources);
+
+        for (Map.Entry<String, byte[]> script : scripts.entrySet()) {
+            try {
+                script.setValue(ScriptCompiledMapUtils.inlineMap(folder, script.getKey(), script.getValue()));
+            } catch (IOException exception) {
+                sourceMapErrors.put(script.getKey(), exception.getMessage());
+            }
+        }
 
         ScriptManifest manifest = checkManifest(folder, scripts, findings);
         boolean namesValid = true;
@@ -189,7 +200,7 @@ public final class ScriptCheckUtils {
             checkSizes(ScriptPackage.create(manifest, scripts, resources), findings);
         }
 
-        checkScripts(scripts, findings);
+        checkScripts(scripts, sourceMapErrors, findings);
         checkResources(resources, findings);
 
         return findings;
@@ -265,15 +276,22 @@ public final class ScriptCheckUtils {
     }
 
     /**
-     * Checks every script with one Rhino context of the runtime's settings.
+     * Checks every script with one Rhino context of the runtime's settings; a script with a source map error gets it as an error of the whole
+     * script.
      */
-    private static void checkScripts(@NotNull Map<String, byte[]> scripts, @NotNull List<ScriptFinding> findings) {
+    private static void checkScripts(@NotNull Map<String, byte[]> scripts, @NotNull Map<String, String> sourceMapErrors,
+                                     @NotNull List<ScriptFinding> findings) {
         try (Context context = new ContextFactory().enterContext()) {
             context.setInterpretedMode(true);
             context.setLanguageVersion(Context.VERSION_ECMASCRIPT);
 
             for (Map.Entry<String, byte[]> script : scripts.entrySet()) {
                 List<ScriptFinding> scriptFindings = new ArrayList<>();
+                String sourceMapError = sourceMapErrors.get(script.getKey());
+
+                if (sourceMapError != null) {
+                    scriptFindings.add(new ScriptFinding(script.getKey(), ScriptFinding.NO_LINE, Severity.ERROR, sourceMapError));
+                }
 
                 checkScript(context, script.getKey(), new String(script.getValue(), StandardCharsets.UTF_8), scriptFindings);
                 scriptFindings.sort(Comparator.comparingInt(ScriptFinding::getLine));

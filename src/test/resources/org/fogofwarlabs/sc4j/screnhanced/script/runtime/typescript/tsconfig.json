@@ -6,7 +6,8 @@
         "noLib": true,
         "strict": true,
         "rootDir": "src",
-        "outDir": "script"
+        "outDir": "script",
+        "sourceMap": true
     },
     "files": [
         "../../../../../../../../../mod/resources/org/fogofwarlabs/sc4j/screnhanced/script/scr-enhanced.d.ts",
