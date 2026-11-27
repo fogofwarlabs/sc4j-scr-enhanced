@@ -115,7 +115,7 @@ public final class ImageGraphics implements ScrImageAnimation {
 
     /**
      * @return the frames of a frame set: {@code 1} or {@value SheetLayout#TURNING_DIRECTIONS} for graphics made from a sheet, {@code 0} for
-     * graphics of GRP and anim files, whose frame sets the image's {@code images.dat} Graphic Turns tells
+     *         graphics of GRP and anim files, whose frame sets the image's {@code images.dat} Graphic Turns tells
      */
     public int getDirections() {
         return this.directions;

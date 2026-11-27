@@ -1,5 +1,7 @@
 package org.fogofwarlabs.sc4j.screnhanced.translation;
 
+import org.fogofwarlabs.sc4j.translate.GlossaryEntry;
+import org.fogofwarlabs.sc4j.translate.TranslationContext;
 import org.fogofwarlabs.sc4j.translate.TranslationRequest;
 import org.jetbrains.annotations.NotNull;
 import org.junit.jupiter.api.Assertions;
@@ -13,11 +15,15 @@ import java.util.Locale;
  */
 final class TextTranslationTest {
     private static final @NotNull Locale TARGET = Locale.KOREAN;
+    /**
+     * The translation contexts of the requests, with the players' terms only.
+     */
+    private static final @NotNull TranslationContexts CONTEXTS = TranslationContexts.create(GameTerms.EMPTY, SlangGlossary.load());
 
     @Test
     void translate_map_text_should_ask_once_per_text_and_answer_once_the_translation_came() {
         RecordingTranslator translator = new RecordingTranslator();
-        TextTranslation translation = new TextTranslation(translator, false, true);
+        TextTranslation translation = new TextTranslation(translator, CONTEXTS, false, true);
 
         TextTranslation.Answer first = translation.translateMapText("Defend the base", TARGET);
         TextTranslation.Answer second = translation.translateMapText("Defend the base", TARGET);
@@ -38,7 +44,7 @@ final class TextTranslationTest {
     @Test
     void digit_runs_share_one_template_translation() {
         RecordingTranslator translator = new RecordingTranslator();
-        TextTranslation translation = new TextTranslation(translator, false, true);
+        TextTranslation translation = new TextTranslation(translator, CONTEXTS, false, true);
 
         TextTranslation.Answer third = translation.translateMapText("Wave 3 - 120 seconds left", TARGET);
 
@@ -56,7 +62,7 @@ final class TextTranslationTest {
     @Test
     void a_template_whose_placeholders_do_not_come_back_asks_for_the_exact_text() {
         RecordingTranslator translator = new RecordingTranslator();
-        TextTranslation translation = new TextTranslation(translator, false, true);
+        TextTranslation translation = new TextTranslation(translator, CONTEXTS, false, true);
         TextTranslation.Answer answer = translation.translateMapText("Wave 3 of 9 incoming", TARGET);
 
         Assertions.assertNotNull(answer);
@@ -75,7 +81,7 @@ final class TextTranslationTest {
     @Test
     void text_art_is_not_asked_for() {
         RecordingTranslator translator = new RecordingTranslator();
-        TextTranslation translation = new TextTranslation(translator, false, true);
+        TextTranslation translation = new TextTranslation(translator, CONTEXTS, false, true);
 
         Assertions.assertFalse(TextTranslation.isTranslatable("|==#==|  ##  |==#==| ok"));
         Assertions.assertFalse(TextTranslation.isTranslatable("\u0004 \u0005"));
@@ -94,7 +100,7 @@ final class TextTranslationTest {
     @Test
     void status_rows_and_labels_with_digits_and_separators_are_asked_for() {
         RecordingTranslator translator = new RecordingTranslator();
-        TextTranslation translation = new TextTranslation(translator, false, true);
+        TextTranslation translation = new TextTranslation(translator, CONTEXTS, false, true);
         String row = "\u0013\u0004:+: \u001FWave: \u00040 \u0002| \u0011시대: \u0004고대시대 \u0002| \u0007병력 총 가치: \u0004300 \u0002| " +
                      "\u0010문화력: \u00040 \u0002| \u0008적군 수: \u00040/300 \u0004:+:";
         String changed = row.replace("Wave: \u00040", "Wave: \u00041")
@@ -128,10 +134,31 @@ final class TextTranslationTest {
     @Test
     void map_text_translation_off_asks_for_nothing() {
         RecordingTranslator translator = new RecordingTranslator();
-        TextTranslation translation = new TextTranslation(translator, true, false);
+        TextTranslation translation = new TextTranslation(translator, CONTEXTS, true, false);
 
         Assertions.assertNull(translation.translateMapText("Defend the base", TARGET));
         Assertions.assertEquals("Defend the base", translation.presentMapText("Defend the base", TARGET));
         Assertions.assertEquals(List.of(), translator.getRequests());
+    }
+
+    @Test
+    void requests_carry_the_context_of_their_kind_and_target_language() {
+        RecordingTranslator translator = new RecordingTranslator();
+        TextTranslation translation = new TextTranslation(translator, CONTEXTS, true, true);
+
+        translation.translateChat("ㅎㅇ 멀티 먹을게", 0, TARGET);
+        translation.translateMapText("Defend the base", TARGET);
+        translation.translateChat("앞마당 지켜줘", 0, Locale.ENGLISH);
+
+        List<TranslationRequest> requests = translator.getRequests();
+
+        TranslationContext englishChat = CONTEXTS.getContext(TextKind.CHAT, Locale.ENGLISH).join();
+
+        Assertions.assertEquals(3, requests.size());
+        Assertions.assertSame(CONTEXTS.getContext(TextKind.CHAT, TARGET).join(), requests.get(0).getContext());
+        Assertions.assertSame(CONTEXTS.getContext(TextKind.MAP_TEXT, TARGET).join(), requests.get(1).getContext());
+        Assertions.assertSame(englishChat, requests.get(2).getContext());
+        Assertions.assertEquals(TextKind.CHAT.getLabel(), englishChat.getTextKind());
+        Assertions.assertTrue(englishChat.getGlossary().contains(new GlossaryEntry("멀티", Locale.ENGLISH, "expansion")));
     }
 }

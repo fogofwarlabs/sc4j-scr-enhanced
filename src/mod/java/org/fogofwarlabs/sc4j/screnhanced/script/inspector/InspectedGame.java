@@ -229,7 +229,7 @@ final class InspectedGame {
      * @param contextId the id, or {@code -1} for none
      * @param uniqueId  the unique id, or {@code null} for none
      * @return the context with the unique id, else with the id, else the default context when neither is given; {@code null} if the given id
-     * names no context of the game
+     *         names no context of the game
      */
     @Nullable ExecutionContext findContext(int contextId, @Nullable String uniqueId) {
         if (uniqueId == null && contextId < 0) {

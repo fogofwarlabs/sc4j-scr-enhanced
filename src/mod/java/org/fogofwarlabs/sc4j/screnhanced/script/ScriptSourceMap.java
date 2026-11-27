@@ -311,7 +311,7 @@ public final class ScriptSourceMap {
      * @param scriptName the script name
      * @param line       the line of the script in the map, from {@code 1}
      * @return the original location {@code <source>:<line>} or {@code <script>:<line>}, or {@code null} if the map has no such script or the
-     * script is protected and has no such line
+     *         script is protected and has no such line
      */
     public @Nullable String findOriginalLocation(@NotNull String scriptName, int line) {
         ScriptLines script = this.scripts.get(scriptName);

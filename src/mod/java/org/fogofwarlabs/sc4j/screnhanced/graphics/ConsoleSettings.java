@@ -139,7 +139,7 @@ public final class ConsoleSettings {
 
     /**
      * @return {@code true} if the script set the console to show only the minimap, the visibility, the position or the anchor of a dialog, the
-     * visibility or the position of a control, or the minimap size, {@code false} otherwise
+     *         visibility or the position of a control, or the minimap size, {@code false} otherwise
      */
     public boolean hasDialogSettings() {
         if (this.minimapOnly || this.minimapSize != ScrConsolePlacement.MINIMAP_SIZE) {
@@ -172,7 +172,7 @@ public final class ConsoleSettings {
     /**
      * @param dialog the dialog
      * @return {@code true} if the script showed the dialog or never set it, {@code false} if it hid it or, for a dialog but the minimap and the
-     * text box, never set it while the console shows only the minimap
+     *         text box, never set it while the console shows only the minimap
      */
     public boolean isDialogVisible(ScrConsolePlacement.@NotNull Dialog dialog) {
         if (this.visibilitySet[dialog.ordinal()]) {

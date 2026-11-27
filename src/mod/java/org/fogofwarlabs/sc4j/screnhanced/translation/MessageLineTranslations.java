@@ -278,7 +278,7 @@ public final class MessageLineTranslations implements ScrMessageAreaPresenter {
      * @param firstLine the rotating line of the first piece; each next piece is on the next rotating line
      * @param lineCount the number of pieces
      * @implSpec Asks for the translation of each paragraph with a piece still shown when the text's kind is translated, and remembers the
-     * paragraph's shown rotating lines with their bytes and deadlines. A paragraph ends after a piece that ends with a line feed.
+     *         paragraph's shown rotating lines with their bytes and deadlines. A paragraph ends after a piece that ends with a line feed.
      */
     @Override
     public void onTextWritten(MessageLines.@NotNull TextSource source, int sender, byte @NotNull [] line, int textStart, int firstLine,
@@ -372,7 +372,7 @@ public final class MessageLineTranslations implements ScrMessageAreaPresenter {
      *
      * @param line the rotating line or {@link MessageLines#SYSTEM_LINE}
      * @implSpec Forgets what a rotating line showed in place of its bytes; of the system line, keeps the text the game wrote, which shows
-     * its bytes, and keeps watching the line.
+     *         its bytes, and keeps watching the line.
      */
     @Override
     public void onLineWritten(int line) {
