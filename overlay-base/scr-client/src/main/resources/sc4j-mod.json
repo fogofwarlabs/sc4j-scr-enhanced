@@ -42,6 +42,26 @@
       "default": "enUS",
       "systemDefault": true,
       "label": {"en": "Text language", "ko": "텍스트 언어"}
+    },
+    {
+      "key": "translateChat",
+      "type": "boolean",
+      "default": true,
+      "label": {"en": "Translate chat", "ko": "채팅 번역"},
+      "description": {
+        "en": "Shows other players' chat in the text language",
+        "ko": "다른 플레이어의 채팅을 텍스트 언어로 표시"
+      }
+    },
+    {
+      "key": "translateMapText",
+      "type": "boolean",
+      "default": true,
+      "label": {"en": "Translate map texts", "ko": "맵 텍스트 번역"},
+      "description": {
+        "en": "Shows the texts of maps in the text language",
+        "ko": "맵의 텍스트를 텍스트 언어로 표시"
+      }
     }
   ]
 }
