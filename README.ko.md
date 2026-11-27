@@ -73,6 +73,12 @@ function onUnitDied(event) {
 
 가이드: [Enhanced Script](docs/script.ko.md).
 
+### 6. 번역
+
+다른 플레이어의 채팅과 맵의 텍스트를 SC4J 엔진의 번역기로 번역해 텍스트 언어로 보여 줍니다(설정 `채팅 번역`, `맵 텍스트 번역`).
+
+요청마다 채팅인지 맵 텍스트인지 알리고 용어집을 줍니다. 용어집은 스타크래프트: 리마스터 설치본에 있는 모든 게임 언어의 유닛, 건물, 업그레이드, 기술 이름과 자주 쓰는 플레이어 용어([`slang.json`](src/mod/resources/org/fogofwarlabs/sc4j/screnhanced/translation/slang.json))입니다.
+
 ## 구성
 
 | 경로 | 내용 |

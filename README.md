@@ -73,6 +73,12 @@ function onUnitDied(event) {
 
 Guide: [Enhanced Script](docs/script.md).
 
+### 6. Translation
+
+Other players' chat and the texts of maps are shown in the text language, translated by the SC4J engine's translator (settings `Translate chat` and `Translate map texts`).
+
+Each request tells the translator whether the text is chat or a map text and gives a glossary: the names of units, buildings, upgrades and technologies in every game language the StarCraft: Remastered installation has, and common player terms ([`slang.json`](src/mod/resources/org/fogofwarlabs/sc4j/screnhanced/translation/slang.json)).
+
 ## Layout
 
 | Path | Contents |

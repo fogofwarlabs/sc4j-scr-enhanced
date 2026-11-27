@@ -12,6 +12,7 @@
     </option>
     <JavaCodeStyleSettings>
       <option name="ALIGN_MULTILINE_TEXT_BLOCKS" value="true" />
+      <option name="JD_INDENT_ON_CONTINUATION" value="true" />
     </JavaCodeStyleSettings>
     <Properties>
       <option name="KEEP_BLANK_LINES" value="true" />

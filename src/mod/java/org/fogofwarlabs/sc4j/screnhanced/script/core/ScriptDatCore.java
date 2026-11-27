@@ -147,7 +147,7 @@ final class ScriptDatCore {
 
     /**
      * @return the limit of a write: that of the column, or the count of the flingy, sprite or image types, registered ones included, for a
-     * reference column whose limit is the native count of its types
+     *         reference column whose limit is the native count of its types
      */
     private int getLimit(ScriptDatTables.@NotNull Column column) {
         ScriptDatTables.Reference reference = column.getReference();

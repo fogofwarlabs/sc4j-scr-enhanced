@@ -20,6 +20,10 @@ import java.util.function.IntPredicate;
  */
 final class MessageLineTranslationsTest {
     /**
+     * The translation contexts of the requests, with the players' terms only.
+     */
+    private static final @NotNull TranslationContexts CONTEXTS = TranslationContexts.create(GameTerms.EMPTY, SlangGlossary.load());
+    /**
      * The layout that keeps every text on one line.
      */
     private static final MessageLines.@NotNull TextLayout SINGLE_LINE = text -> new int[]{text.length};
@@ -142,7 +146,7 @@ final class MessageLineTranslationsTest {
     void another_players_chat_shows_its_translation_while_the_line_keeps_its_bytes() {
         MessageLines lines = createLines(SINGLE_LINE);
         RecordingTranslator translator = new RecordingTranslator();
-        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, true, false), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, true, false), EVERY_SENDER);
 
         lines.writeChat(FIRST_PLAYER, "안녕".getBytes(StandardCharsets.UTF_8));
 
@@ -174,7 +178,7 @@ final class MessageLineTranslationsTest {
         MessageLines lines = createLines(SINGLE_LINE);
         RecordingTranslator translator = new RecordingTranslator();
 
-        install(lines, SINGLE_LINE, new TextTranslation(translator, true, false), EVERY_SENDER);
+        install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, true, false), EVERY_SENDER);
 
         lines.writeChat(FIRST_PLAYER, "\u0003go \u0004\u0005now".getBytes(StandardCharsets.UTF_8));
 
@@ -191,7 +195,7 @@ final class MessageLineTranslationsTest {
     void overwritten_bytes_stop_the_substitution() {
         MessageLines lines = createLines(SINGLE_LINE);
         RecordingTranslator translator = new RecordingTranslator();
-        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, true, false), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, true, false), EVERY_SENDER);
 
         lines.writeChat(FIRST_PLAYER, "gg".getBytes(StandardCharsets.UTF_8));
         translator.answer(0, "good game");
@@ -214,7 +218,7 @@ final class MessageLineTranslationsTest {
     void a_translation_takes_the_rotating_lines_of_its_message() {
         MessageLines lines = createLines(FIXED_PIECES);
         RecordingTranslator translator = new RecordingTranslator();
-        MessageLineTranslations translations = install(lines, FIXED_PIECES, new TextTranslation(translator, true, false), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, FIXED_PIECES, new TextTranslation(translator, CONTEXTS, true, false), EVERY_SENDER);
 
         lines.writeChat(FIRST_PLAYER, "abcdefghijkl".getBytes(StandardCharsets.UTF_8));
         translator.answer(0, "xy");
@@ -232,7 +236,7 @@ final class MessageLineTranslationsTest {
     void received_whispers_are_translated() {
         MessageLines lines = createLines(SINGLE_LINE);
         RecordingTranslator translator = new RecordingTranslator();
-        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, true, false), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, true, false), EVERY_SENDER);
 
         lines.writeWhisper("<From: %s>", "Zeratul#abcd12", "en taro".getBytes(StandardCharsets.UTF_8), true);
         translator.answer(0, "honor");
@@ -248,7 +252,7 @@ final class MessageLineTranslationsTest {
     void own_lines_and_sent_whispers_are_not_translated() {
         MessageLines lines = createLines(SINGLE_LINE);
         RecordingTranslator translator = new RecordingTranslator();
-        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, true, true), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, true, true), EVERY_SENDER);
 
         lines.writeChat(SECOND_PLAYER, "mine".getBytes(StandardCharsets.UTF_8));
         lines.writeWhisper("<To: %s>", "Zeratul#abcd12", "sent".getBytes(StandardCharsets.UTF_8), false);
@@ -262,7 +266,7 @@ final class MessageLineTranslationsTest {
         MessageLines lines = createLines(SINGLE_LINE);
         RecordingTranslator translator = new RecordingTranslator();
 
-        install(lines, SINGLE_LINE, new TextTranslation(translator, true, false), sender -> sender != FIRST_PLAYER);
+        install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, true, false), sender -> sender != FIRST_PLAYER);
 
         lines.writeChat(FIRST_PLAYER, "attack".getBytes(StandardCharsets.UTF_8));
 
@@ -273,7 +277,7 @@ final class MessageLineTranslationsTest {
     void chat_translation_off_asks_for_no_chat() {
         MessageLines lines = createLines(SINGLE_LINE);
         RecordingTranslator translator = new RecordingTranslator();
-        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, false, true), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, false, true), EVERY_SENDER);
 
         lines.writeChat(FIRST_PLAYER, "gg".getBytes(StandardCharsets.UTF_8));
 
@@ -285,7 +289,7 @@ final class MessageLineTranslationsTest {
     void trigger_text_shows_its_translation_while_the_line_keeps_its_bytes() {
         MessageLines lines = createLines(SINGLE_LINE);
         RecordingTranslator translator = new RecordingTranslator();
-        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, false, true), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, false, true), EVERY_SENDER);
 
         lines.writeTriggerText("\u0004Défendez la base".getBytes(StandardCharsets.UTF_8), true, 0);
 
@@ -312,7 +316,7 @@ final class MessageLineTranslationsTest {
     void map_text_translation_off_asks_for_no_trigger_text() {
         MessageLines lines = createLines(SINGLE_LINE);
         RecordingTranslator translator = new RecordingTranslator();
-        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, true, false), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, true, false), EVERY_SENDER);
 
         lines.writeTriggerText("Défendez la base".getBytes(StandardCharsets.UTF_8), true, 0);
         writeMemory(lines, MEMORY_LINE, "Tenez bon");
@@ -327,7 +331,7 @@ final class MessageLineTranslationsTest {
     void a_line_written_by_memory_is_translated_once_its_bytes_settle() {
         MessageLines lines = createLines(SINGLE_LINE);
         RecordingTranslator translator = new RecordingTranslator();
-        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, false, true), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, false, true), EVERY_SENDER);
         int settled = HOST_CLOCK + MessageLineTranslations.MEMORY_TEXT_SETTLE_MILLISECONDS;
 
         writeMemory(lines, MEMORY_LINE, "Tenez bon");
@@ -357,7 +361,7 @@ final class MessageLineTranslationsTest {
     void a_message_written_over_a_memory_line_is_not_translated() {
         MessageLines lines = createLines(SINGLE_LINE);
         RecordingTranslator translator = new RecordingTranslator();
-        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, false, true), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, false, true), EVERY_SENDER);
 
         writeMemory(lines, FIRST_LINE, "Tenez bon");
         Assertions.assertNull(translations.findSubstitute(FIRST_LINE, lines.getLine(FIRST_LINE), HOST_CLOCK));
@@ -374,7 +378,7 @@ final class MessageLineTranslationsTest {
     void text_art_written_by_memory_is_not_asked_for() {
         MessageLines lines = createLines(SINGLE_LINE);
         RecordingTranslator translator = new RecordingTranslator();
-        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, false, true), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, false, true), EVERY_SENDER);
 
         writeMemory(lines, MEMORY_LINE, "|==#==|  ##  |==#==| ok");
 
@@ -388,7 +392,7 @@ final class MessageLineTranslationsTest {
     void a_status_row_written_by_memory_is_asked_for_as_a_template() {
         MessageLines lines = createLines(SINGLE_LINE);
         RecordingTranslator translator = new RecordingTranslator();
-        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, false, true), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, false, true), EVERY_SENDER);
         int settled = HOST_CLOCK + MessageLineTranslations.MEMORY_TEXT_SETTLE_MILLISECONDS;
 
         writeMemory(lines, MEMORY_LINE, "\u0013\u0004:+: \u001FWave: \u00047 \u0002| \u0011시대: \u0004고대시대 \u0002| \u0008적군 수: \u000412/300 \u0004:+:");
@@ -411,7 +415,7 @@ final class MessageLineTranslationsTest {
     void the_system_line_written_by_memory_is_translated_until_the_game_writes_it() {
         MessageLines lines = createLines(SINGLE_LINE);
         RecordingTranslator translator = new RecordingTranslator();
-        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, false, true), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, false, true), EVERY_SENDER);
         int settled = HOST_CLOCK + MessageLineTranslations.MEMORY_TEXT_SETTLE_MILLISECONDS;
 
         writeMemory(lines, MessageLines.SYSTEM_LINE, "Tenez bon");
@@ -440,7 +444,7 @@ final class MessageLineTranslationsTest {
     void a_memory_line_whose_numbers_changed_shows_the_known_translation_at_once() {
         MessageLines lines = createLines(SINGLE_LINE);
         RecordingTranslator translator = new RecordingTranslator();
-        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, false, true), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, false, true), EVERY_SENDER);
         int settled = HOST_CLOCK + MessageLineTranslations.MEMORY_TEXT_SETTLE_MILLISECONDS;
 
         writeMemory(lines, MEMORY_LINE, "Vague 3 sur 10");
@@ -473,7 +477,7 @@ final class MessageLineTranslationsTest {
     void the_system_line_a_map_writes_over_the_games_text_in_each_frame_is_translated() {
         MessageLines lines = createLines(SINGLE_LINE);
         RecordingTranslator translator = new RecordingTranslator();
-        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, false, true), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, false, true), EVERY_SENDER);
         int settled = HOST_CLOCK + MessageLineTranslations.MEMORY_TEXT_SETTLE_MILLISECONDS;
 
         for (int time = HOST_CLOCK; time < settled + FRAME_MILLISECONDS; time += FRAME_MILLISECONDS) {
@@ -506,7 +510,7 @@ final class MessageLineTranslationsTest {
         writeMemory(lines, MessageLines.SYSTEM_LINE, "Tenez bon");
         lines.writeTriggerText("Gardez la base".getBytes(StandardCharsets.UTF_8), 0);
 
-        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, false, true), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, false, true), EVERY_SENDER);
 
         Assertions.assertNull(translations.findSubstitute(MessageLines.SYSTEM_LINE, lines.getLine(MessageLines.SYSTEM_LINE), HOST_CLOCK));
         Assertions.assertNull(translations.findSubstitute(FIRST_LINE, lines.getLine(FIRST_LINE), HOST_CLOCK));
@@ -535,7 +539,7 @@ final class MessageLineTranslationsTest {
 
         writeMemory(lines, MessageLines.SYSTEM_LINE, "Tenez bon");
 
-        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, true, false), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, SINGLE_LINE, new TextTranslation(translator, CONTEXTS, true, false), EVERY_SENDER);
 
         Assertions.assertNull(translations.findSubstitute(MessageLines.SYSTEM_LINE, lines.getLine(MessageLines.SYSTEM_LINE),
                                                           HOST_CLOCK + MessageLineTranslations.MEMORY_TEXT_SETTLE_MILLISECONDS));
@@ -546,7 +550,7 @@ final class MessageLineTranslationsTest {
     void a_trigger_text_laid_out_in_lines_is_asked_for_line_by_line_and_keeps_its_rows() {
         MessageLines lines = createLines(LINE_FEED_PIECES);
         RecordingTranslator translator = new RecordingTranslator();
-        MessageLineTranslations translations = install(lines, LINE_FEED_PIECES, new TextTranslation(translator, false, true), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, LINE_FEED_PIECES, new TextTranslation(translator, CONTEXTS, false, true), EVERY_SENDER);
         String pairSpaces = " ".repeat(86);
 
         lines.writeTriggerText(SPEED_MENU.getBytes(StandardCharsets.UTF_8), true, 0);
@@ -585,7 +589,7 @@ final class MessageLineTranslationsTest {
     void a_trigger_text_longer_than_the_rotating_lines_translates_the_rows_still_shown() {
         MessageLines lines = createLines(LINE_FEED_PIECES);
         RecordingTranslator translator = new RecordingTranslator();
-        MessageLineTranslations translations = install(lines, LINE_FEED_PIECES, new TextTranslation(translator, false, true), EVERY_SENDER);
+        MessageLineTranslations translations = install(lines, LINE_FEED_PIECES, new TextTranslation(translator, CONTEXTS, false, true), EVERY_SENDER);
         StringBuilder text = new StringBuilder();
 
         for (int row = 0; row < MESSAGE_ROWS; row++) {

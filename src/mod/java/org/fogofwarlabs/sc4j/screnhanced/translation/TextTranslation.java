@@ -19,7 +19,9 @@ import java.util.function.IntPredicate;
  * Asks for the translations of the texts the client shows: other players' chat texts while the mod setting {@code translateChat} turns chat
  * translation on, and the texts of the map while the mod setting {@code translateMapText} turns map-text translation on. The color and
  * control characters of a text (below {@code U+0020}) are protected spans, so they stay as they are and in their places between the
- * translated runs. A translation is for display only: the callers draw it in place of the text and keep the text itself.
+ * translated runs. Every request carries the {@link TranslationContexts translation context} of its kind of text ({@link TextKind#CHAT} or
+ * {@link TextKind#MAP_TEXT}) and target language, and is sent once that context is built. A translation is for display only: the callers
+ * draw it in place of the text and keep the text itself.
  * <p>
  * A map text is asked for once: the answers of the most recent map texts are kept by their exact text, so a text shown on every frame costs
  * a map lookup. Before a map text is asked for, each run of digits becomes a placeholder number, so texts that differ only in their numbers,
@@ -28,7 +30,7 @@ import java.util.function.IntPredicate;
  * asked for ({@link #isTranslatable}).
  * <p>
  * The translator answers on a worker thread; every method of this class and of its answers runs on the client's UI thread, which reads a
- * future only once it is done.
+ * future only once it is done. A request made before its context is built is sent from the thread that builds the context.
  */
 public final class TextTranslation implements ScrTextPresenter {
     /**
@@ -353,6 +355,7 @@ public final class TextTranslation implements ScrTextPresenter {
 
 
     private final @NotNull Translator translator;
+    private final @NotNull TranslationContexts contexts;
     private final boolean chatEnabled;
     private final boolean mapTextEnabled;
 
@@ -373,11 +376,13 @@ public final class TextTranslation implements ScrTextPresenter {
      * Creates a {@link TextTranslation} instance.
      *
      * @param translator     the translator of the run
+     * @param contexts       the translation contexts of the requests
      * @param chatEnabled    whether chat translation is on
      * @param mapTextEnabled whether map-text translation is on
      */
-    public TextTranslation(@NotNull Translator translator, boolean chatEnabled, boolean mapTextEnabled) {
+    public TextTranslation(@NotNull Translator translator, @NotNull TranslationContexts contexts, boolean chatEnabled, boolean mapTextEnabled) {
         this.translator     = translator;
+        this.contexts       = contexts;
         this.chatEnabled    = chatEnabled;
         this.mapTextEnabled = mapTextEnabled;
 
@@ -449,7 +454,7 @@ public final class TextTranslation implements ScrTextPresenter {
             return null;
         }
 
-        return new Answer(this, text, target, null, this.request(text, protectedLength, target));
+        return new Answer(this, text, target, null, this.request(text, protectedLength, target, TextKind.CHAT));
     }
 
     /**
@@ -548,7 +553,7 @@ public final class TextTranslation implements ScrTextPresenter {
         CompletableFuture<Translation> future = this.requests.get(text);
 
         if (future == null) {
-            future = this.request(text, 0, target);
+            future = this.request(text, 0, target, TextKind.MAP_TEXT);
 
             this.requests.put(text, future);
         }
@@ -557,14 +562,17 @@ public final class TextTranslation implements ScrTextPresenter {
     }
 
     /**
-     * Asks the translator for a text with its start and its control characters protected.
+     * Asks the translator for a text with its start and its control characters protected, with the context of its kind and target
+     * language once that context is built.
      *
      * @param text            the text
      * @param protectedLength the length of the start of the text that stays as it is, or {@code 0}
      * @param target          the language to translate into
+     * @param kind            the kind of the text
      * @return the future of the translation
      */
-    private @NotNull CompletableFuture<@NotNull Translation> request(@NotNull String text, int protectedLength, @NotNull Locale target) {
+    private @NotNull CompletableFuture<@NotNull Translation> request(@NotNull String text, int protectedLength, @NotNull Locale target,
+                                                                     @NotNull TextKind kind) {
         TranslationRequest.Builder request = new TranslationRequest.Builder(text, target).setPriority(TranslationPriority.CHAT);
 
         if (protectedLength > 0) {
@@ -589,6 +597,6 @@ public final class TextTranslation implements ScrTextPresenter {
             request.addProtectedSpan(start, index);
         }
 
-        return this.translator.translate(request.build());
+        return this.contexts.getContext(kind, target).thenCompose(context -> this.translator.translate(request.setContext(context).build()));
     }
 }
