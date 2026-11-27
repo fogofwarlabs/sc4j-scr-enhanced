@@ -2,5 +2,5 @@
 # the SC:R mod does not have. The build stops when one of them changes; the acceptOverlay task records them again.
 6ac78a737fa58d5dced24f8aac206e484d0076f64a8b2a419231c1a8e955c111  scr-client/src/main/resources/meta/banner.png
 f1e2243c8ffad3f71604381f93a4d568f461ada6b745bd5f03755ce59403f381  scr-client/src/main/resources/meta/icon.png
-22d8e9b377bcc8b4b0e80d4644710ee82c8d8313e95108248fd17024a1f16b9a  scr-client/src/main/resources/sc4j-mod.json
+ebaf83285fbc972412d5265875abc3437dcfa1cb29e01a09869f0fd7bafbd81c  scr-client/src/main/resources/sc4j-mod.json
 66e95b6ff0789b0ef364372ae6f656bcff2016d70a68c4a39c5ede148078fdd4  scr-net/src/main/resources/org/fogofwarlabs/sc4j/scr/net/lan/lan-lobby.properties
